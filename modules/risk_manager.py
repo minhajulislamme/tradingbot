@@ -209,7 +209,7 @@ class RiskManager:
         elif self.current_market_condition == 'SQUEEZE':
             # For squeeze condition, use a slightly tighter stop loss than sideways
             # since we're expecting a breakout soon
-            stop_loss_pct = STOP_LOSS_PCT_SIDEWAYS * 0.9
+            stop_loss_pct = STOP_LOSS_PCT_SIDEWAYS * 1.5
             logger.info(f"Squeeze condition detected: Using tight stop loss at {stop_loss_pct*100:.2f}%")
         else:
             stop_loss_pct = STOP_LOSS_PCT  # Default
