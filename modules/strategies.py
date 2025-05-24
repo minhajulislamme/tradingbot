@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 import ta
 import math
+import time
 from datetime import datetime, timedelta
 import random
 
@@ -94,24 +95,69 @@ class TradingStrategy:
         
     def prepare_data(self, klines):
         """Convert raw klines to a DataFrame with OHLCV data"""
-        df = pd.DataFrame(klines, columns=[
-            'open_time', 'open', 'high', 'low', 'close', 'volume',
-            'close_time', 'quote_asset_volume', 'number_of_trades',
-            'taker_buy_base_asset_volume', 'taker_buy_quote_asset_volume', 'ignore'
-        ])
-        
-        # Convert string values to numeric
-        for col in ['open', 'high', 'low', 'close', 'volume']:
-            df[col] = pd.to_numeric(df[col])
+        if not klines or len(klines) == 0:
+            logger.warning("No klines data provided to prepare_data")
+            return pd.DataFrame()
             
-        # Convert timestamps to datetime
-        df['open_time'] = pd.to_datetime(df['open_time'], unit='ms')
-        df['close_time'] = pd.to_datetime(df['close_time'], unit='ms')
+        # Check if we can use cached data
+        current_time = time.time()
+        cache_key = None
         
-        # Ensure dataframe is sorted by time
-        df = df.sort_values('open_time', ascending=True).reset_index(drop=True)
+        if len(klines) > 0:
+            # Create a cache key based on the first and last timestamp + length
+            first_timestamp = klines[0][0]
+            last_timestamp = klines[-1][0]
+            cache_key = f"{first_timestamp}_{last_timestamp}_{len(klines)}"
+            
+            # Check if we have cached data for this input
+            if cache_key in self._cache:
+                cache_entry = self._cache[cache_key]
+                # Check if cache entry is still valid (not expired)
+                if current_time - cache_entry['time'] < self._cache_expiry:
+                    logger.debug(f"Using cached data for {cache_key}")
+                    return cache_entry['data']
         
-        return df
+        try:
+            # Convert to DataFrame if cache miss
+            df = pd.DataFrame(klines, columns=[
+                'open_time', 'open', 'high', 'low', 'close', 'volume',
+                'close_time', 'quote_asset_volume', 'number_of_trades',
+                'taker_buy_base_asset_volume', 'taker_buy_quote_asset_volume', 'ignore'
+            ])
+            
+            # Convert string values to numeric
+            for col in ['open', 'high', 'low', 'close', 'volume']:
+                df[col] = pd.to_numeric(df[col])
+                
+            # Convert timestamps to datetime
+            df['open_time'] = pd.to_datetime(df['open_time'], unit='ms')
+            df['close_time'] = pd.to_datetime(df['close_time'], unit='ms')
+            
+            # Ensure dataframe is sorted by time
+            df = df.sort_values('open_time', ascending=True).reset_index(drop=True)
+            
+            # Store in cache if we have a valid key
+            if cache_key:
+                # Manage cache size - remove oldest entry if needed
+                if len(self._cache) >= self._max_cache_entries:
+                    oldest_key = min(self._cache.keys(), 
+                                    key=lambda k: self._cache[k].get('time', 0))
+                    del self._cache[oldest_key]
+                    logger.debug(f"Cache full, removed oldest entry {oldest_key}")
+                
+                # Store in cache with timestamp
+                self._cache[cache_key] = {
+                    'data': df,
+                    'time': current_time
+                }
+                logger.debug(f"Cached data for {cache_key}")
+            
+            return df
+            
+        except Exception as e:
+            logger.error(f"Error in prepare_data: {e}")
+            # Return empty DataFrame on error
+            return pd.DataFrame()
     
     def set_risk_manager(self, risk_manager):
         """Set the risk manager for the strategy"""
@@ -200,6 +246,20 @@ class RaysolDynamicGridStrategy(TradingStrategy):
         self.cooloff_period = cooloff_period
         self.max_consecutive_losses = max_consecutive_losses
         
+        # Initialize Supertrend indicator
+        self.supertrend_indicator = SupertrendIndicator(
+            period=self.supertrend_period, 
+            multiplier=self.supertrend_multiplier
+        )
+        
+        # Initialize trade tracking
+        self.consecutive_losses = 0
+        self.last_trade_time = None
+        
+        # Initialize storage for levels
+        self.fib_support_levels = []
+        self.fib_resistance_levels = []
+        
         # State variables
         self.grids = None
         self.current_trend = None
@@ -236,7 +296,7 @@ class RaysolDynamicGridStrategy(TradingStrategy):
             # Clean up expired cache entries periodically
             if random.random() < 0.05:  # 5% chance to clean on each call
                 expired_keys = []
-                for k, v in self._cache.items():
+                for k, v in list(self._cache.items()):  # Use list() to avoid modification during iteration
                     if current_time - v.get('time', 0) > self._cache_expiry:
                         expired_keys.append(k)
                 for k in expired_keys:
@@ -303,7 +363,7 @@ class RaysolDynamicGridStrategy(TradingStrategy):
         # Volume indicators first to avoid duplicate calculation
         df['volume_ma'] = ta.trend.sma_indicator(df['volume'], 
                                                 window=self.volume_ma_period)
-        df['volume_ratio'] = df['volume'] / df['volume_ma']
+        df['volume_ratio'] = df['volume'] / df['volume_ma'].where(df['volume_ma'] > 0, 1)  # Avoid division by zero
         
         # Volume-weighted RSI (using the volume_ratio calculated above)
         df['volume_weighted_rsi'] = df['rsi'] * df['volume_ratio']
@@ -393,6 +453,12 @@ class RaysolDynamicGridStrategy(TradingStrategy):
         # Identify swing high and low
         swing_high = price_data.max()
         swing_low = price_data.min()
+        
+        # Check if there's sufficient price movement to calculate meaningful levels
+        price_range = swing_high - swing_low
+        if price_range <= 0 or price_range / swing_low < 0.01:  # Less than 1% range
+            logger.debug("Insufficient price range for meaningful Fibonacci levels")
+            return
         
         # Reset fibonacci levels
         self.fib_support_levels = []
@@ -934,7 +1000,21 @@ class RaysolDynamicGridStrategy(TradingStrategy):
                 
                 # Check if we're still in the cool-off period
                 cooloff_end_time = last_loss_time + timedelta(minutes=self.cooloff_period)
-                return current_time < cooloff_end_time
+                in_cooloff = current_time < cooloff_end_time
+                
+                # Log cooloff status
+                if in_cooloff:
+                    time_remaining = (cooloff_end_time - current_time).total_seconds() / 60
+                    logger.info(f"In cool-off period. {time_remaining:.1f} minutes remaining.")
+                else:
+                    # Reset consecutive losses if cooloff period has ended
+                    logger.info(f"Cool-off period ended. Resetting consecutive losses and cache.")
+                    self.consecutive_losses = 0
+                    self.last_loss_time = None
+                    # Reset all cached data to ensure fresh start
+                    self.reset_cache()
+                
+                return in_cooloff
             except Exception as e:
                 logger.error(f"Error in cooloff period calculation: {e}")
                 # Default to False if there's an error in comparison
@@ -1198,11 +1278,16 @@ class RaysolDynamicGridStrategy(TradingStrategy):
         
         # If no grids, generate them first
         if self.grids is None or len(self.grids) == 0 or self.should_update_grids(df):
-            self.grids = self.generate_grids(df)
-            self.current_trend = latest['trend']
-            self.current_market_condition = latest['market_condition']
-            self.last_grid_update = latest['open_time']
-            logger.info(f"Generated new grids for {self.current_market_condition} market condition")
+            try:
+                self.grids = self.generate_grids(df)
+                self.current_trend = latest['trend']
+                self.current_market_condition = latest['market_condition']
+                self.last_grid_update = latest['open_time']
+                logger.info(f"Generated new grids for {self.current_market_condition} market condition")
+            except Exception as e:
+                logger.error(f"Error generating grids: {e}")
+                # Return None in case of grid generation error
+                return None
             return None  # No signal on grid initialization
         
         # Find the nearest grid levels
@@ -1376,7 +1461,9 @@ class RaysolDynamicGridStrategy(TradingStrategy):
             
             # Check if we need to enter cool-off period
             if self.consecutive_losses >= self.max_consecutive_losses:
-                logger.info(f"Entering cool-off period for {self.cooloff_period} candles")
+                # Reset cache to ensure we start fresh after cooloff
+                self.reset_cache()
+                logger.info(f"Entering cool-off period for {self.cooloff_period} minutes. All caches have been reset.")
     
     def get_extreme_market_signal(self, df):
         """
@@ -1409,6 +1496,16 @@ class RaysolDynamicGridStrategy(TradingStrategy):
                 return 'SELL'
                 
         return None
+    
+    def reset_cache(self):
+        """Reset all caches to ensure fresh data after cool-off periods"""
+        self._cache = {}
+        self._cached_dataframe = None
+        self._last_kline_time = None
+        self.fib_support_levels = []
+        self.fib_resistance_levels = []
+        self.grids = None
+        logger.info("All strategy caches have been reset")
     
     def get_signal(self, klines):
         """
