@@ -3,14 +3,20 @@ import math
 import time
 from datetime import datetime, timedelta
 from modules.config import (
-    RISK_PER_TRADE, MAX_OPEN_POSITIONS,
+    MAX_OPEN_POSITIONS,
     USE_STOP_LOSS, STOP_LOSS_PCT, 
     TRAILING_STOP, TRAILING_STOP_PCT,
     USE_TAKE_PROFIT, TAKE_PROFIT_PCT,
     TRAILING_TAKE_PROFIT, TRAILING_TAKE_PROFIT_PCT,
     AUTO_COMPOUND, COMPOUND_REINVEST_PERCENT, COMPOUND_INTERVAL,
     # Multi-instance mode settings
-    MULTI_INSTANCE_MODE, MAX_POSITIONS_PER_SYMBOL
+    MULTI_INSTANCE_MODE, MAX_POSITIONS_PER_SYMBOL,
+    # Futures trading settings
+    LEVERAGE,
+    # Margin safety settings
+    MARGIN_SAFETY_FACTOR, MAX_POSITION_SIZE_PCT, MIN_FREE_BALANCE_PCT,
+    # Fixed percentage trading
+    FIXED_TRADE_PERCENTAGE
 )
 
 logger = logging.getLogger(__name__)
@@ -58,27 +64,28 @@ class RiskManager:
             logger.error(f"Could not retrieve symbol info for {symbol}")
             return 0
             
-        # Calculate risk amount
-        risk_amount = balance * RISK_PER_TRADE
+        # Use 75% of account balance instead of RISK_PER_TRADE
+        # This is a fixed percentage approach rather than a risk-based approach
+        trade_amount = balance * FIXED_TRADE_PERCENTAGE
         
         # Apply position size multiplier from strategy
-        adjusted_risk_amount = risk_amount * self.position_size_multiplier
-        logger.debug(f"Risk amount adjusted from {risk_amount:.4f} to {adjusted_risk_amount:.4f} (multiplier: {self.position_size_multiplier:.2f})")
-        risk_amount = adjusted_risk_amount
+        adjusted_trade_amount = trade_amount * self.position_size_multiplier
+        logger.debug(f"Trade amount adjusted from {trade_amount:.4f} to {adjusted_trade_amount:.4f} (multiplier: {self.position_size_multiplier:.2f})")
+        risk_amount = adjusted_trade_amount  # Keep variable name for compatibility
         
-        # Calculate position size based on risk and stop loss
+        # Calculate position size based on the fixed percentage and stop loss
         if stop_loss_price and USE_STOP_LOSS:
-            # If stop loss is provided, calculate size based on it
+            # If stop loss is provided, calculate size based on it and available margin
             risk_per_unit = abs(price - stop_loss_price)
             if risk_per_unit <= 0:
                 logger.error("Stop loss too close to entry price")
                 return 0
                 
-            # Calculate max quantity based on risk
-            max_quantity = risk_amount / risk_per_unit
+            # Calculate max quantity based on available funds and 10x leverage
+            max_quantity = (risk_amount * LEVERAGE) / price
         else:
-            # If no stop loss, use a percentage of balance
-            max_quantity = (balance * RISK_PER_TRADE) / price
+            # If no stop loss, use the fixed percentage approach with leverage
+            max_quantity = (risk_amount * LEVERAGE) / price
         
         # Apply precision to quantity
         quantity_precision = symbol_info['quantity_precision']
@@ -92,21 +99,53 @@ class RiskManager:
             # Try to adjust to meet minimum notional
             min_quantity = math.ceil(min_notional / price * 10**quantity_precision) / 10**quantity_precision
             
-            # Make sure we don't use more than 50% of balance
-            max_safe_quantity = (balance * 0.5) / price
+            # Make sure we don't use more than MAX_POSITION_SIZE_PCT of balance
+            max_safe_quantity = (balance * MAX_POSITION_SIZE_PCT) / price
             max_safe_quantity = math.floor(max_safe_quantity * 10**quantity_precision) / 10**quantity_precision
             
             quantity = min(min_quantity, max_safe_quantity)
             
-            if quantity * price > balance * 0.5:
-                logger.warning("Position would use more than 50% of balance - reducing size")
-                quantity = math.floor((balance * 0.5 / price) * 10**quantity_precision) / 10**quantity_precision
+            if quantity * price > balance * MAX_POSITION_SIZE_PCT:
+                logger.warning(f"Position would use more than {MAX_POSITION_SIZE_PCT*100}% of balance - reducing size")
+                quantity = math.floor((balance * MAX_POSITION_SIZE_PCT / price) * 10**quantity_precision) / 10**quantity_precision
+        
+        # FUTURES MARGIN CHECK - Calculate required margin and check if it's within our limits
+        # Get current leverage
+        leverage = LEVERAGE  # From config
+        
+        # Calculate required margin for the position
+        required_margin = (quantity * price) / leverage
+        
+        # Use margin safety factor from config
+        max_safe_margin = balance * MARGIN_SAFETY_FACTOR
+        
+        # Always keep a minimum free balance
+        min_free_balance = balance * MIN_FREE_BALANCE_PCT
+        max_safe_margin = min(max_safe_margin, balance - min_free_balance)
+        
+        # If required margin exceeds safe limit, adjust position size
+        if required_margin > max_safe_margin:
+            logger.warning(f"Required margin ({required_margin:.4f} USDT) exceeds safe limit ({max_safe_margin:.4f} USDT)")
             
-            if quantity <= 0:
-                logger.error("Balance too low to open even minimum position")
-                return 0
+            # Calculate maximum safe quantity based on available margin
+            max_margin_quantity = (max_safe_margin * leverage) / price
+            max_margin_quantity = math.floor(max_margin_quantity * 10**quantity_precision) / 10**quantity_precision
+            
+            # Update quantity to safe margin amount
+            old_quantity = quantity
+            quantity = max_margin_quantity
+            
+            logger.warning(f"Reducing position size from {old_quantity} to {quantity} due to margin constraints")
+            
+        # Final check to ensure we have a valid quantity
+        if quantity <= 0:
+            logger.error("Balance too low to open even minimum position")
+            return 0
                 
         logger.info(f"Calculated position size: {quantity} units at {price} per unit")
+        # Log margin requirements for transparency
+        logger.debug(f"Margin required: {(quantity * price) / leverage:.4f} USDT, Available balance: {balance:.4f} USDT")
+        
         return quantity
         
     def should_open_position(self, symbol):
@@ -220,9 +259,20 @@ class RiskManager:
             
         logger.info(f"Calculated take profit at {take_profit_price} ({TAKE_PROFIT_PCT*100}%)")
         return take_profit_price
-    
+
     def adjust_take_profit_for_trailing(self, symbol, side, current_price, position_info=None):
-        """Adjust take profit for trailing take profit if needed"""
+        """
+        Adjust take profit target for trailing take profit if enabled
+        
+        Args:
+            symbol: Trading pair symbol
+            side: 'BUY' or 'SELL' position side
+            current_price: Current market price
+            position_info: Optional position information (will be fetched if not provided)
+            
+        Returns:
+            float or None: New take profit price if adjusted, None otherwise
+        """
         if not TRAILING_TAKE_PROFIT:
             return None
             
@@ -243,18 +293,18 @@ class RiskManager:
         
         # Calculate new take profit based on current price
         if side == "BUY":  # Long position
-            new_tp = current_price * (1 - TRAILING_TAKE_PROFIT_PCT)
-            # Only move take profit up, never down
-            current_tp = self.calculate_take_profit(symbol, side, entry_price)
-            if current_tp and new_tp <= current_tp:
-                logger.debug(f"Not adjusting trailing take profit: current ({current_tp}) > calculated ({new_tp})")
-                return None
-        else:  # Short position
             new_tp = current_price * (1 + TRAILING_TAKE_PROFIT_PCT)
-            # Only move take profit down, never up
+            # Only move take profit down, never up (to lock in profits)
             current_tp = self.calculate_take_profit(symbol, side, entry_price)
             if current_tp and new_tp >= current_tp:
                 logger.debug(f"Not adjusting trailing take profit: current ({current_tp}) < calculated ({new_tp})")
+                return None
+        else:  # Short position
+            new_tp = current_price * (1 - TRAILING_TAKE_PROFIT_PCT)
+            # Only move take profit up, never down (to lock in profits)
+            current_tp = self.calculate_take_profit(symbol, side, entry_price)
+            if current_tp and new_tp <= current_tp:
+                logger.debug(f"Not adjusting trailing take profit: current ({current_tp}) > calculated ({new_tp})")
                 return None
                 
         # Apply price precision
@@ -266,7 +316,56 @@ class RiskManager:
         logger.info(f"Adjusted trailing take profit to {new_tp} ({TRAILING_TAKE_PROFIT_PCT*100}%)")
         logger.info(f"Current price: {current_price}, Entry price: {entry_price}, Take profit moved: {current_tp} -> {new_tp}")
         return new_tp
+
+    def calculate_partial_take_profits(self, symbol, side, entry_price):
+        """
+        Calculate multiple take profit levels for partial position closing
         
+        Args:
+            symbol: Trading pair symbol
+            side: 'BUY' or 'SELL' position side
+            entry_price: Entry price of the position
+            
+        Returns:
+            list: List of dictionaries with 'price', 'percentage', and 'pct_from_entry' keys
+        """
+        if not USE_TAKE_PROFIT:
+            return []
+            
+        # Define take profit levels as percentages from entry price
+        if side == "BUY":  # Long position
+            tp_levels = [
+                {'pct_from_entry': 2.5, 'percentage': 0.5},   # Take 50% profit at 2.5% gain
+                {'pct_from_entry': 5.0, 'percentage': 0.5}    # Take remaining 50% at 5% gain
+            ]
+        else:  # Short position
+            tp_levels = [
+                {'pct_from_entry': -2.5, 'percentage': 0.5},  # Take 50% profit at 2.5% gain
+                {'pct_from_entry': -5.0, 'percentage': 0.5}   # Take remaining 50% at 5% gain
+            ]
+        
+        # Convert percentage gains to actual prices
+        symbol_info = self.binance_client.get_symbol_info(symbol)
+        price_precision = symbol_info['price_precision'] if symbol_info else 4
+        
+        take_profit_levels = []
+        for level in tp_levels:
+            if side == "BUY":
+                price = entry_price * (1 + level['pct_from_entry'] / 100)
+            else:
+                price = entry_price * (1 - abs(level['pct_from_entry']) / 100)
+                
+            price = round(price, price_precision)
+            
+            take_profit_levels.append({
+                'price': price,
+                'percentage': level['percentage'],
+                'pct_from_entry': abs(level['pct_from_entry'])
+            })
+            
+        logger.info(f"Calculated {len(take_profit_levels)} partial take profit levels for {symbol} {side} position")
+        return take_profit_levels
+    
     def update_balance_for_compounding(self):
         """Update balance tracking for auto-compounding"""
         if not AUTO_COMPOUND:
@@ -337,14 +436,14 @@ class RiskManager:
         Returns:
             float: Current risk level (0.0-1.0)
         """
-        # Base risk level from config
-        base_risk = RISK_PER_TRADE
+        # Fixed trade percentage
+        base_risk = FIXED_TRADE_PERCENTAGE
         
         # Apply position size multiplier
         dynamic_risk = base_risk * self.position_size_multiplier
         
-        # Clamp to reasonable range (0.01-0.10)
-        return max(0.01, min(0.10, dynamic_risk))
+        # Clamp to reasonable range (0.10-1.00)
+        return max(0.10, min(1.00, dynamic_risk))
         
     # Method for handling dynamic position sizing from strategies
     def update_position_sizing(self, position_size=None):
@@ -385,28 +484,80 @@ class RiskManager:
         current_price = self.binance_client.get_symbol_price(symbol)
         balance = self.binance_client.get_account_balance()
         
-        # Calculate base risk amount without position sizing
-        base_risk_amount = balance * RISK_PER_TRADE
+        # Calculate trade amount (75% of balance)
+        trade_amount = balance * FIXED_TRADE_PERCENTAGE
         
-        # Calculate adjusted risk with position sizing
-        adjusted_risk_amount = base_risk_amount * self.position_size_multiplier
+        # Calculate adjusted amount with position sizing
+        adjusted_trade_amount = trade_amount * self.position_size_multiplier
         
-        # Calculate theoretical position sizes
-        base_position_size = base_risk_amount / current_price
-        adjusted_position_size = adjusted_risk_amount / current_price
+        # Calculate theoretical position sizes with 10x leverage
+        base_position_size = (trade_amount * LEVERAGE) / current_price
+        adjusted_position_size = (adjusted_trade_amount * LEVERAGE) / current_price
+        
+        # Calculate margin requirements
+        base_margin_required = (base_position_size * current_price) / LEVERAGE
+        adjusted_margin_required = (adjusted_position_size * current_price) / LEVERAGE
+        
+        # Calculate maximum position size based on available margin
+        max_safe_margin = balance * MARGIN_SAFETY_FACTOR
+        # Ensure we keep minimum free balance
+        min_free_balance = balance * MIN_FREE_BALANCE_PCT
+        max_safe_margin = min(max_safe_margin, balance - min_free_balance)
+        max_margin_position_size = (max_safe_margin * LEVERAGE) / current_price
+        
+        # Check if margin is sufficient
+        margin_sufficient = adjusted_margin_required <= max_safe_margin
         
         return {
             'symbol': symbol,
             'current_price': current_price,
             'account_balance': balance,
-            'risk_per_trade': RISK_PER_TRADE,
-            'base_risk_amount': base_risk_amount,
+            'trade_pct_of_balance': FIXED_TRADE_PERCENTAGE,
+            'base_trade_amount': trade_amount,
             'position_size_multiplier': self.position_size_multiplier,
-            'adjusted_risk_amount': adjusted_risk_amount,
+            'adjusted_trade_amount': adjusted_trade_amount,
             'base_position_size': base_position_size,
             'adjusted_position_size': adjusted_position_size,
+            'leverage': LEVERAGE,
+            'base_margin_required': base_margin_required,
+            'adjusted_margin_required': adjusted_margin_required,
+            'max_safe_margin': max_safe_margin,
+            'max_position_size_by_margin': max_margin_position_size,
+            'margin_sufficient': margin_sufficient,
             'market_condition': self.current_market_condition
         }
+
+    def check_margin_sufficient(self, symbol, price, quantity):
+        """
+        Check if there's sufficient margin available for the requested position size
+        
+        Args:
+            symbol: Trading pair symbol
+            price: Current market price
+            quantity: Position size to check
+            
+        Returns:
+            bool: True if there's sufficient margin, False otherwise
+        """
+        # Get account balance
+        balance = self.binance_client.get_account_balance()
+        
+        # Calculate required margin
+        required_margin = (quantity * price) / LEVERAGE
+        
+        # Use margin safety factor from config
+        max_safe_margin = balance * MARGIN_SAFETY_FACTOR
+        
+        # Always keep a minimum free balance
+        min_free_balance = balance * MIN_FREE_BALANCE_PCT
+        max_safe_margin = min(max_safe_margin, balance - min_free_balance)
+        
+        if required_margin > max_safe_margin:
+            logger.warning(f"Insufficient margin: Required {required_margin:.4f} USDT, Available {max_safe_margin:.4f} USDT")
+            return False
+        
+        logger.debug(f"Margin check passed: Required {required_margin:.4f} USDT, Available {max_safe_margin:.4f} USDT")
+        return True
 
 
 # Helper functions

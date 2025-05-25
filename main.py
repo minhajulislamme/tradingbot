@@ -8,7 +8,7 @@ import argparse
 import json
 import traceback 
 from datetime import datetime, timedelta
-import pandas as pdT
+import pandas as pd
 import matplotlib.pyplot as plt
 from pathlib import Path
 
@@ -806,14 +806,33 @@ def check_for_signals(symbol=None):
                     order_id = order.get('orderId', 'unknown')
                     logger.info(f"✅ Successfully opened LONG position with order ID: {order_id}")
                     
-                    # Verify the position was opened
-                    time.sleep(1)  # Wait for the order to be processed
-                    new_position = binance_client.get_position_info(symbol)
-                    if new_position and new_position['position_amount'] > 0:
-                        logger.info(f"Position verification successful. Amount: {new_position['position_amount']}")
-                        
-                        entry_price = float(new_position.get('entry_price', current_price))
-                        
+                    # Try to verify the position was opened with retries
+                    position_verified = False
+                    new_position = None
+                    entry_price = current_price  # Fallback to current price
+                    position_amount = quantity  # Fallback to original quantity
+                    
+                    for attempt in range(3):
+                        time.sleep(1 + attempt)  # Increasing wait time: 1s, 2s, 3s
+                        try:
+                            new_position = binance_client.get_position_info(symbol)
+                            if new_position and new_position['position_amount'] > 0:
+                                logger.info(f"Position verification successful. Amount: {new_position['position_amount']}")
+                                entry_price = float(new_position.get('entry_price', current_price))
+                                position_amount = new_position['position_amount']
+                                position_verified = True
+                                break
+                            else:
+                                logger.warning(f"Position verification attempt {attempt + 1}/3 failed. Retrying...")
+                        except Exception as e:
+                            logger.warning(f"Error during position verification attempt {attempt + 1}/3: {e}")
+                    
+                    if not position_verified:
+                        logger.warning(f"⚠️ Position verification failed after 3 attempts. Using fallback values.")
+                        logger.warning(f"Will attempt to place protective orders with fallback entry price: {entry_price}")
+                    
+                    # Always attempt to place protective orders, even if verification failed
+                    try:
                         # Get recent klines for volatility calculation
                         recent_klines = klines_data.get(symbol, [])[-30:] if klines_data.get(symbol) else None
                         
@@ -824,7 +843,7 @@ def check_for_signals(symbol=None):
                         
                         if stop_loss_price:
                             sl_order = binance_client.place_stop_loss_order(
-                                symbol, "SELL", new_position['position_amount'], stop_loss_price
+                                symbol, "SELL", position_amount, stop_loss_price
                             )
                             if sl_order:
                                 logger.info(f"✅ Volatility-based stop loss placed at {stop_loss_price}")
@@ -833,7 +852,7 @@ def check_for_signals(symbol=None):
                         
                         # Place partial take profits instead of a single take profit
                         tp_orders = place_partial_take_profits(
-                            symbol, "BUY", new_position['position_amount'], entry_price, new_position
+                            symbol, "BUY", position_amount, entry_price, new_position
                         )
                         
                         if tp_orders:
@@ -844,14 +863,17 @@ def check_for_signals(symbol=None):
                             take_profit_price = risk_manager.calculate_take_profit(symbol, "BUY", entry_price)
                             if take_profit_price:
                                 tp_order = binance_client.place_take_profit_order(
-                                    symbol, "SELL", new_position['position_amount'], take_profit_price
+                                    symbol, "SELL", position_amount, take_profit_price
                                 )
                                 if tp_order:
                                     logger.info(f"✅ Take profit placed at {take_profit_price}")
                                 else:
                                     logger.error(f"❌ Failed to place take profit at {take_profit_price}")
-                    else:
-                        logger.error(f"❌ Position verification failed! Order placed but no position found.")
+                                    
+                    except Exception as e:
+                        logger.error(f"❌ Error placing protective orders: {e}")
+                        import traceback
+                        logger.error(f"Traceback: {traceback.format_exc()}")
                 else:
                     logger.error(f"❌ Failed to place BUY order!")
                     
@@ -918,14 +940,33 @@ def check_for_signals(symbol=None):
                     order_id = order.get('orderId', 'unknown')
                     logger.info(f"✅ Successfully opened SHORT position with order ID: {order_id}")
                     
-                    # Verify the position was opened
-                    time.sleep(1)  # Wait for the order to be processed
-                    new_position = binance_client.get_position_info(symbol)
-                    if new_position and new_position['position_amount'] < 0:
-                        logger.info(f"Position verification successful. Amount: {new_position['position_amount']}")
-                        
-                        entry_price = float(new_position.get('entry_price', current_price))
-                        
+                    # Try to verify the position was opened with retries
+                    position_verified = False
+                    new_position = None
+                    entry_price = current_price  # Fallback to current price
+                    position_amount = quantity  # Fallback to original quantity
+                    
+                    for attempt in range(3):
+                        time.sleep(1 + attempt)  # Increasing wait time: 1s, 2s, 3s
+                        try:
+                            new_position = binance_client.get_position_info(symbol)
+                            if new_position and new_position['position_amount'] < 0:
+                                logger.info(f"Position verification successful. Amount: {new_position['position_amount']}")
+                                entry_price = float(new_position.get('entry_price', current_price))
+                                position_amount = abs(new_position['position_amount'])  # Use absolute value for order quantity
+                                position_verified = True
+                                break
+                            else:
+                                logger.warning(f"Position verification attempt {attempt + 1}/3 failed. Retrying...")
+                        except Exception as e:
+                            logger.warning(f"Error during position verification attempt {attempt + 1}/3: {e}")
+                    
+                    if not position_verified:
+                        logger.warning(f"⚠️ Position verification failed after 3 attempts. Using fallback values.")
+                        logger.warning(f"Will attempt to place protective orders with fallback entry price: {entry_price}")
+                    
+                    # Always attempt to place protective orders, even if verification failed
+                    try:
                         # Get recent klines for volatility calculation
                         recent_klines = klines_data.get(symbol, [])[-30:] if klines_data.get(symbol) else None
                         
@@ -936,7 +977,7 @@ def check_for_signals(symbol=None):
                         
                         if stop_loss_price:
                             sl_order = binance_client.place_stop_loss_order(
-                                symbol, "BUY", abs(new_position['position_amount']), stop_loss_price
+                                symbol, "BUY", position_amount, stop_loss_price
                             )
                             if sl_order:
                                 logger.info(f"✅ Volatility-based stop loss placed at {stop_loss_price}")
@@ -945,7 +986,7 @@ def check_for_signals(symbol=None):
                         
                         # Place partial take profits instead of a single take profit
                         tp_orders = place_partial_take_profits(
-                            symbol, "SELL", abs(new_position['position_amount']), entry_price, new_position
+                            symbol, "SELL", position_amount, entry_price, new_position
                         )
                         
                         if tp_orders:
@@ -956,14 +997,17 @@ def check_for_signals(symbol=None):
                             take_profit_price = risk_manager.calculate_take_profit(symbol, "SELL", entry_price)
                             if take_profit_price:
                                 tp_order = binance_client.place_take_profit_order(
-                                    symbol, "BUY", abs(new_position['position_amount']), take_profit_price
+                                    symbol, "BUY", position_amount, take_profit_price
                                 )
                                 if tp_order:
                                     logger.info(f"✅ Take profit placed at {take_profit_price}")
                                 else:
                                     logger.error(f"❌ Failed to place take profit at {take_profit_price}")
-                    else:
-                        logger.error(f"❌ Position verification failed! Order placed but no position found.")
+                                    
+                    except Exception as e:
+                        logger.error(f"❌ Error placing protective orders: {e}")
+                        import traceback
+                        logger.error(f"Traceback: {traceback.format_exc()}")
                 else:
                     logger.error(f"❌ Failed to place SELL order!")
         

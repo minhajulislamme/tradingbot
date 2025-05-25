@@ -9,7 +9,7 @@ from tqdm import tqdm
 import json
 
 from modules.config import (
-    BACKTEST_INITIAL_BALANCE, BACKTEST_COMMISSION, RISK_PER_TRADE,
+    BACKTEST_INITIAL_BALANCE, BACKTEST_COMMISSION, FIXED_TRADE_PERCENTAGE,
     LEVERAGE, STOP_LOSS_PCT, TAKE_PROFIT_PCT, BACKTEST_USE_AUTO_COMPOUND,
     COMPOUND_REINVEST_PERCENT
 )
@@ -87,7 +87,7 @@ class Backtester:
         
     def calculate_position_size(self, price, stop_price=None):
         """Calculate position size based on risk parameters"""
-        risk_amount = self.balance * RISK_PER_TRADE
+        trade_amount = self.balance * FIXED_TRADE_PERCENTAGE
         
         # Add a sanity check to prevent unrealistic position sizing
         # Cap the max position value to 50% of balance regardless of leverage
@@ -100,7 +100,7 @@ class Backtester:
                 return 0
                 
             # Apply leverage to position size with realistic limits
-            position_size = (risk_amount * self.leverage) / risk_per_unit
+            position_size = (trade_amount * self.leverage) / price
             
             # Ensure position value doesn't exceed maximum
             position_value = (position_size * price) / self.leverage
@@ -108,7 +108,7 @@ class Backtester:
                 position_size = (max_position_value * self.leverage) / price
         else:
             # Default position sizing with realistic limits
-            position_size = (self.balance * RISK_PER_TRADE * self.leverage) / price
+            position_size = (self.balance * FIXED_TRADE_PERCENTAGE * self.leverage) / price
             
             # Ensure position value doesn't exceed maximum
             position_value = (position_size * price) / self.leverage
@@ -472,7 +472,7 @@ class Backtester:
             "max_drawdown": max_drawdown,
             "sharpe_ratio": sharpe_ratio,
             "leverage": self.leverage,
-            "risk_per_trade": RISK_PER_TRADE * 100,
+            "fixed_trade_percentage": FIXED_TRADE_PERCENTAGE * 100,
             "commission_rate": self.commission_rate * 100,
             "auto_compound": BACKTEST_USE_AUTO_COMPOUND,
             "reality_check_applied": self.reality_check_applied if hasattr(self, 'reality_check_applied') else False,
@@ -614,7 +614,7 @@ class Backtester:
 ## Settings
 - **Strategy:** {self.strategy_name}
 - **Leverage:** {self.leverage}x
-- **Risk Per Trade:** {results['risk_per_trade']:.2f}%
+- **Fixed Trade Percentage:** {results['fixed_trade_percentage']:.2f}%
 - **Commission Rate:** {results['commission_rate']:.4f}%
 - **Auto Compounding:** {"Enabled" if results['auto_compound'] else "Disabled"}"""
 

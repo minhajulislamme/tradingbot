@@ -53,8 +53,13 @@ RAYSOL_SIDEWAYS_THRESHOLD = int(os.getenv('RAYSOL_SIDEWAYS_THRESHOLD', '15'))
 
 # Position sizing
 INITIAL_BALANCE = float(os.getenv('INITIAL_BALANCE', '50.0'))
-RISK_PER_TRADE = float(os.getenv('RISK_PER_TRADE', '0.10'))
+FIXED_TRADE_PERCENTAGE = float(os.getenv('FIXED_TRADE_PERCENTAGE', '0.75'))  # Use 75% of balance per trade
 MAX_OPEN_POSITIONS = int(os.getenv('MAX_OPEN_POSITIONS', '6'))
+
+# Margin safety settings
+MARGIN_SAFETY_FACTOR = float(os.getenv('MARGIN_SAFETY_FACTOR', '0.95'))  # Use at most 95% of available margin
+MAX_POSITION_SIZE_PCT = float(os.getenv('MAX_POSITION_SIZE_PCT', '0.50'))  # Max position size as % of balance
+MIN_FREE_BALANCE_PCT = float(os.getenv('MIN_FREE_BALANCE_PCT', '0.05'))  # Keep at least 5% of balance free
 
 # Multi-instance configuration for running separate bot instances per trading pair
 MULTI_INSTANCE_MODE = os.getenv('MULTI_INSTANCE_MODE', 'True').lower() == 'true'
