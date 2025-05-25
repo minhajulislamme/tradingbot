@@ -12,6 +12,8 @@ from modules.config import (
     TAKE_PROFIT_PCT_BULLISH, TAKE_PROFIT_PCT_BEARISH, TAKE_PROFIT_PCT_SIDEWAYS,
     TRAILING_STOP_PCT_BULLISH, TRAILING_STOP_PCT_BEARISH, TRAILING_STOP_PCT_SIDEWAYS,
     TRAILING_TAKE_PROFIT_PCT_BULLISH, TRAILING_TAKE_PROFIT_PCT_BEARISH, TRAILING_TAKE_PROFIT_PCT_SIDEWAYS,
+    # Minimum stop distance settings
+    MIN_STOP_DISTANCE_PCT, RAYSOL_MIN_STOP_DISTANCE_PCT,
     # Multi-instance mode settings
     MULTI_INSTANCE_MODE, MAX_POSITIONS_PER_SYMBOL
 )
@@ -219,6 +221,12 @@ class RiskManager:
             original_pct = stop_loss_pct
             stop_loss_pct = stop_loss_pct * 1.8  # Increased from 1.5 to 1.8 for better volatility handling
             logger.info(f"RAYSOL token detected: Increasing stop loss percentage from {original_pct*100:.2f}% to {stop_loss_pct*100:.2f}%")
+        
+        # Enforce minimum stop distance - additional safeguard
+        min_stop_distance_pct = RAYSOL_MIN_STOP_DISTANCE_PCT if is_raysol else MIN_STOP_DISTANCE_PCT
+        if stop_loss_pct < min_stop_distance_pct:
+            logger.info(f"Stop loss percentage {stop_loss_pct*100:.2f}% below minimum {min_stop_distance_pct*100:.1f}%, enforcing minimum")
+            stop_loss_pct = min_stop_distance_pct
             
         if side == "BUY":  # Long position
             stop_price = entry_price * (1 - stop_loss_pct)
@@ -672,6 +680,16 @@ class RiskManager:
                 atr_stop_distance = atr * atr_multiplier
                 atr_stop_price = entry_price - atr_stop_distance
                 
+                # Enforce minimum stop distance - CRITICAL FIX for tight stops
+                min_stop_distance_pct = RAYSOL_MIN_STOP_DISTANCE_PCT if is_raysol else MIN_STOP_DISTANCE_PCT
+                min_stop_distance = entry_price * min_stop_distance_pct
+                min_stop_price_enforced = entry_price - min_stop_distance
+                
+                # Use the lower (further from entry) of ATR-based or minimum enforced stop
+                atr_stop_price = min(atr_stop_price, min_stop_price_enforced)
+                logger.info(f"Minimum stop distance enforced: {min_stop_distance_pct*100:.1f}% "
+                          f"({min_stop_distance:.6f} price units)")
+                
                 # For long positions, consider nearest support level
                 if nearest_support:
                     support_distance = entry_price - nearest_support
@@ -679,8 +697,9 @@ class RiskManager:
                     if support_distance <= atr_stop_distance * 2.0:
                         # Place stop slightly below support (3% of ATR for better buffer)
                         support_stop_price = nearest_support - (atr * 0.03)
-                        # Use the better (higher) of the two stop prices
+                        # Use the better (higher) of the two stop prices, but still respect minimum distance
                         stop_price = max(atr_stop_price, support_stop_price)
+                        stop_price = min(stop_price, min_stop_price_enforced)  # Ensure minimum distance
                         logger.info(f"Using support-based stop loss: {stop_price} (support level: {nearest_support})")
                     else:
                         stop_price = atr_stop_price
@@ -710,6 +729,16 @@ class RiskManager:
                 atr_stop_distance = atr * atr_multiplier
                 atr_stop_price = entry_price + atr_stop_distance
                 
+                # Enforce minimum stop distance - CRITICAL FIX for tight stops
+                min_stop_distance_pct = RAYSOL_MIN_STOP_DISTANCE_PCT if is_raysol else MIN_STOP_DISTANCE_PCT
+                min_stop_distance = entry_price * min_stop_distance_pct
+                min_stop_price_enforced = entry_price + min_stop_distance
+                
+                # Use the higher (further from entry) of ATR-based or minimum enforced stop
+                atr_stop_price = max(atr_stop_price, min_stop_price_enforced)
+                logger.info(f"Minimum stop distance enforced: {min_stop_distance_pct*100:.1f}% "
+                          f"({min_stop_distance:.6f} price units)")
+                
                 # For short positions, consider nearest resistance level
                 if nearest_resistance:
                     resistance_distance = nearest_resistance - entry_price
@@ -717,8 +746,9 @@ class RiskManager:
                     if resistance_distance <= atr_stop_distance * 2.0:
                         # Place stop slightly above resistance (3% of ATR for better buffer)
                         resistance_stop_price = nearest_resistance + (atr * 0.03)
-                        # Use the better (lower) of the two stop prices
+                        # Use the better (lower) of the two stop prices, but still respect minimum distance
                         stop_price = min(atr_stop_price, resistance_stop_price)
+                        stop_price = max(stop_price, min_stop_price_enforced)  # Ensure minimum distance
                         logger.info(f"Using resistance-based stop loss: {stop_price} (resistance level: {nearest_resistance})")
                     else:
                         stop_price = atr_stop_price
@@ -750,16 +780,19 @@ class RiskManager:
                 stop_price = round(stop_price, price_precision)
                 
             # Add detailed log information for better understanding
+            stop_distance_pct = abs(stop_price - entry_price) / entry_price * 100
             if is_raysol:
                 logger.info(f"Calculated optimized RAYSOL-specific stop loss at {stop_price} "
-                          f"(ATR: {atr:.6f}, {atr_pct*100:.2f}% of price, "
+                          f"(Distance: {stop_distance_pct:.2f}%, ATR: {atr:.6f}, {atr_pct*100:.2f}% of price, "
                           f"Multiplier: {atr_multiplier}, Volatility: {volatility_regime}, "
-                          f"Market condition: {self.current_market_condition})")
+                          f"Market condition: {self.current_market_condition}, "
+                          f"Min enforced: {(RAYSOL_MIN_STOP_DISTANCE_PCT*100):.1f}%)")
             else:
                 logger.info(f"Calculated optimized ATR-based stop loss at {stop_price} "
-                          f"(ATR: {atr:.6f}, {atr_pct*100:.2f}% of price, "
+                          f"(Distance: {stop_distance_pct:.2f}%, ATR: {atr:.6f}, {atr_pct*100:.2f}% of price, "
                           f"Multiplier: {atr_multiplier}, Volatility: {volatility_regime}, "
-                          f"Market condition: {self.current_market_condition})")
+                          f"Market condition: {self.current_market_condition}, "
+                          f"Min enforced: {(MIN_STOP_DISTANCE_PCT*100):.1f}%)")
             return stop_price
                 
         except Exception as e:

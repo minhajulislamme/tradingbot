@@ -100,6 +100,10 @@ TRAILING_TAKE_PROFIT_PCT_BULLISH = float(os.getenv('TRAILING_TAKE_PROFIT_PCT_BUL
 TRAILING_TAKE_PROFIT_PCT_BEARISH = float(os.getenv('TRAILING_TAKE_PROFIT_PCT_BEARISH', '0.02'))
 TRAILING_TAKE_PROFIT_PCT_SIDEWAYS = float(os.getenv('TRAILING_TAKE_PROFIT_PCT_SIDEWAYS', '0.015'))
 
+# Minimum stop distance settings to prevent overly tight stops
+MIN_STOP_DISTANCE_PCT = float(os.getenv('MIN_STOP_DISTANCE_PCT', '0.025'))  # 2.5% default minimum
+RAYSOL_MIN_STOP_DISTANCE_PCT = float(os.getenv('RAYSOL_MIN_STOP_DISTANCE_PCT', '0.035'))  # 3.5% for RAYSOL
+
 # Backtesting parameters
 BACKTEST_START_DATE = os.getenv('BACKTEST_START_DATE', '2023-01-01')
 BACKTEST_END_DATE = os.getenv('BACKTEST_END_DATE', '')  # Empty means use current date
