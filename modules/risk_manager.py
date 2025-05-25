@@ -217,7 +217,7 @@ class RiskManager:
         # For RAYSOL tokens, add more buffer to the stop loss
         if is_raysol:
             original_pct = stop_loss_pct
-            stop_loss_pct = stop_loss_pct * 1.5  # 50% wider stops for RAYSOL tokens
+            stop_loss_pct = stop_loss_pct * 1.8  # Increased from 1.5 to 1.8 for better volatility handling
             logger.info(f"RAYSOL token detected: Increasing stop loss percentage from {original_pct*100:.2f}% to {stop_loss_pct*100:.2f}%")
             
         if side == "BUY":  # Long position
@@ -607,11 +607,24 @@ class RiskManager:
                 df['high'], df['low'], df['close'], window=21
             ).iloc[-1]
             
-            # Use weighted average ATR with more weight to recent volatility
-            atr = (atr_short * 0.5 + atr_medium * 0.3 + atr_long * 0.2)
+            # Calculate longer period ATR for better trend context
+            atr_extra_long = ta.volatility.average_true_range(
+                df['high'], df['low'], df['close'], window=50
+            ).iloc[-1] if len(df) >= 50 else atr_long
+            
+            # Use weighted average ATR with emphasis on recent but considering longer trends
+            atr = (atr_short * 0.4 + atr_medium * 0.3 + atr_long * 0.2 + atr_extra_long * 0.1)
             
             # Calculate ATR as percentage of price
             atr_pct = atr / entry_price
+            
+            # Add volatility regime detection
+            recent_atr_avg = (atr_short + atr_medium) / 2
+            longer_atr_avg = (atr_long + atr_extra_long) / 2
+            volatility_regime = "HIGH" if recent_atr_avg > longer_atr_avg * 1.3 else "NORMAL"
+            
+            logger.info(f"ATR Analysis - Recent: {recent_atr_avg:.6f}, Longer: {longer_atr_avg:.6f}, "
+                       f"Regime: {volatility_regime}, ATR%: {atr_pct*100:.2f}%")
             
             # Calculate price distance from entry to nearest support/resistance
             nearest_support = None
@@ -628,24 +641,29 @@ class RiskManager:
                 if valid_resistances:
                     nearest_resistance = min(valid_resistances)  # Closest resistance above entry
             
-            # Base multiplier on market condition with better risk management
+            # Base multiplier on market condition with improved risk management
             if self.current_market_condition == 'EXTREME_BULLISH':
-                atr_multiplier = 2.5  # Wider stops in extreme bullish trend
+                atr_multiplier = 3.0  # Wider stops in extreme bullish trend
             elif self.current_market_condition == 'BULLISH':
-                atr_multiplier = 2.0  # Wide stops in bullish trend
+                atr_multiplier = 2.5  # Wide stops in bullish trend
             elif self.current_market_condition == 'EXTREME_BEARISH':
-                atr_multiplier = 1.3  # Tighter stops in extreme bearish trend
+                atr_multiplier = 1.8  # More reasonable stops in extreme bearish trend
             elif self.current_market_condition == 'BEARISH':
-                atr_multiplier = 1.5  # Medium stops in bearish trend
+                atr_multiplier = 2.0  # Medium stops in bearish trend
             elif self.current_market_condition == 'SQUEEZE':
-                atr_multiplier = 1.2  # Be ready for breakout with moderately tight stops
+                atr_multiplier = 1.8  # Be ready for breakout with moderately loose stops
             else:  # SIDEWAYS
-                atr_multiplier = 1.0  # Tighter stops in sideways market
+                atr_multiplier = 2.0  # Looser stops in sideways market to avoid whipsaws
+            
+            # Adjust for volatility regime
+            if volatility_regime == "HIGH":
+                atr_multiplier *= 1.3  # Wider stops in high volatility periods
+                logger.info(f"High volatility regime detected: Increasing ATR multiplier by 30%")
             
             # Apply RAYSOL-specific adjustments
             if is_raysol:
                 original_multiplier = atr_multiplier
-                atr_multiplier = atr_multiplier * 1.35  # Reduced from 1.5 to 1.35 for better win rate
+                atr_multiplier = atr_multiplier * 1.5  # Increased back to 1.5 for RAYSOL volatility
                 logger.info(f"RAYSOL token detected: Increasing ATR multiplier from {original_multiplier} to {atr_multiplier}")
             
             # Calculate stop loss price - use support/resistance levels if available
@@ -657,28 +675,29 @@ class RiskManager:
                 # For long positions, consider nearest support level
                 if nearest_support:
                     support_distance = entry_price - nearest_support
-                    # Only use support level if it's not too far (max 1.5x ATR distance)
-                    if support_distance <= atr_stop_distance * 1.5:
-                        # Place stop slightly below support (5% of ATR)
-                        support_stop_price = nearest_support - (atr * 0.05)
+                    # Only use support level if it's not too far (max 2x ATR distance for more flexibility)
+                    if support_distance <= atr_stop_distance * 2.0:
+                        # Place stop slightly below support (3% of ATR for better buffer)
+                        support_stop_price = nearest_support - (atr * 0.03)
                         # Use the better (higher) of the two stop prices
                         stop_price = max(atr_stop_price, support_stop_price)
                         logger.info(f"Using support-based stop loss: {stop_price} (support level: {nearest_support})")
                     else:
                         stop_price = atr_stop_price
+                        logger.info(f"Support too far ({support_distance:.6f}), using ATR-based stop: {stop_price}")
                 else:
                     stop_price = atr_stop_price
                     
                 # Cap maximum stop distance to standard percentage stop loss * multiplier
                 max_stop_pct = STOP_LOSS_PCT
                 if self.current_market_condition == 'EXTREME_BEARISH':
-                    max_stop_pct = STOP_LOSS_PCT * 0.8  # Tighter in extreme bear markets
+                    max_stop_pct = STOP_LOSS_PCT * 0.9  # Slightly tighter in extreme bear markets
                 elif self.current_market_condition == 'BEARISH':
-                    max_stop_pct = STOP_LOSS_PCT * 0.9  # Slightly tighter in bear markets
+                    max_stop_pct = STOP_LOSS_PCT * 0.95  # Slightly tighter in bear markets
                 
                 # For RAYSOL, adapt the maximum stop distance
                 if is_raysol:
-                    max_stop_pct = max_stop_pct * 1.25  # Reduced from 1.5 to 1.25 for better win rate
+                    max_stop_pct = max_stop_pct * 1.8  # Increased buffer for RAYSOL volatility
                     
                 max_stop_distance = entry_price * max_stop_pct
                 min_stop_price = entry_price - max_stop_distance
@@ -694,28 +713,29 @@ class RiskManager:
                 # For short positions, consider nearest resistance level
                 if nearest_resistance:
                     resistance_distance = nearest_resistance - entry_price
-                    # Only use resistance level if it's not too far (max 1.5x ATR distance)
-                    if resistance_distance <= atr_stop_distance * 1.5:
-                        # Place stop slightly above resistance (5% of ATR)
-                        resistance_stop_price = nearest_resistance + (atr * 0.05)
+                    # Only use resistance level if it's not too far (max 2x ATR distance for more flexibility)
+                    if resistance_distance <= atr_stop_distance * 2.0:
+                        # Place stop slightly above resistance (3% of ATR for better buffer)
+                        resistance_stop_price = nearest_resistance + (atr * 0.03)
                         # Use the better (lower) of the two stop prices
                         stop_price = min(atr_stop_price, resistance_stop_price)
                         logger.info(f"Using resistance-based stop loss: {stop_price} (resistance level: {nearest_resistance})")
                     else:
                         stop_price = atr_stop_price
+                        logger.info(f"Resistance too far ({resistance_distance:.6f}), using ATR-based stop: {stop_price}")
                 else:
                     stop_price = atr_stop_price
                 
                 # Cap maximum stop distance to standard percentage stop loss * multiplier
                 max_stop_pct = STOP_LOSS_PCT
                 if self.current_market_condition == 'EXTREME_BULLISH':
-                    max_stop_pct = STOP_LOSS_PCT * 0.8  # Tighter in extreme bull markets
+                    max_stop_pct = STOP_LOSS_PCT * 0.9  # Slightly tighter in extreme bull markets
                 elif self.current_market_condition == 'BULLISH':
-                    max_stop_pct = STOP_LOSS_PCT * 0.9  # Slightly tighter in bull markets
+                    max_stop_pct = STOP_LOSS_PCT * 0.95  # Slightly tighter in bull markets
                 
                 # For RAYSOL, adapt the maximum stop distance
                 if is_raysol:
-                    max_stop_pct = max_stop_pct * 1.25  # Reduced from 1.5 to 1.25 for better win rate
+                    max_stop_pct = max_stop_pct * 1.8  # Increased buffer for RAYSOL volatility
                     
                 max_stop_distance = entry_price * max_stop_pct
                 max_stop_price = entry_price + max_stop_distance
@@ -733,11 +753,13 @@ class RiskManager:
             if is_raysol:
                 logger.info(f"Calculated optimized RAYSOL-specific stop loss at {stop_price} "
                           f"(ATR: {atr:.6f}, {atr_pct*100:.2f}% of price, "
-                          f"Multiplier: {atr_multiplier}, Market condition: {self.current_market_condition})")
+                          f"Multiplier: {atr_multiplier}, Volatility: {volatility_regime}, "
+                          f"Market condition: {self.current_market_condition})")
             else:
                 logger.info(f"Calculated optimized ATR-based stop loss at {stop_price} "
                           f"(ATR: {atr:.6f}, {atr_pct*100:.2f}% of price, "
-                          f"Multiplier: {atr_multiplier}, Market condition: {self.current_market_condition})")
+                          f"Multiplier: {atr_multiplier}, Volatility: {volatility_regime}, "
+                          f"Market condition: {self.current_market_condition})")
             return stop_price
                 
         except Exception as e:
