@@ -6,17 +6,382 @@ import math
 import time
 from datetime import datetime, timedelta
 import random
+from typing import Dict, List, Tuple, Optional, Any
+# Enhanced ML imports with fallbacks
+try:
+    from sklearn.cluster import KMeans
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.ensemble import IsolationForest
+    SKLEARN_AVAILABLE = True
+except ImportError:
+    # Fallback classes for when sklearn is not available
+    class KMeans:
+        def __init__(self, *args, **kwargs):
+            pass
+        def fit_predict(self, X):
+            return [0] * len(X)
+    
+    class StandardScaler:
+        def __init__(self):
+            pass
+        def fit_transform(self, X):
+            return X
+    
+    class IsolationForest:
+        def __init__(self, *args, **kwargs):
+            pass
+        def fit_predict(self, X):
+            return [1] * len(X)
+    
+    SKLEARN_AVAILABLE = False
+import warnings
+warnings.filterwarnings('ignore')
 
 logger = logging.getLogger(__name__)
 
+class AdvancedMarketAnalyzer:
+    """Advanced market analyzer with ML-based regime detection and comprehensive fallbacks"""
+    
+    def __init__(self):
+        """Initialize market analyzer with optimal default parameters"""
+        self.min_volatility_lookback = 14
+        self.max_volatility_lookback = 50
+        self.volume_window = 20
+        self.volatility_threshold = 0.02
+        self.trend_strength_window = 10
+        
+    def detect_market_regime(self, df):
+        """Detect market regime with ML clustering and statistical fallbacks"""
+        try:
+            if SKLEARN_AVAILABLE and len(df) >= 50:
+                return self._ml_regime_detection(df)
+            else:
+                return self._statistical_regime_detection(df)
+        except Exception as e:
+            logger.warning(f"Market regime detection failed: {e}")
+            return self._simple_regime_detection(df)
+    
+    def _ml_regime_detection(self, df):
+        """ML-based market regime detection using clustering"""
+        try:
+            # Prepare features for clustering
+            features = self._prepare_ml_features(df)
+            if len(features) < 10:
+                return self._statistical_regime_detection(df)
+            
+            # Standardize features
+            scaler = StandardScaler()
+            features_scaled = scaler.fit_transform(features)
+            
+            # Apply KMeans clustering for regime detection
+            kmeans = KMeans(n_clusters=3, random_state=42, n_init=10)
+            clusters = kmeans.fit_predict(features_scaled)
+            
+            # Map clusters to market regimes based on volatility and trend
+            regime_mapping = self._map_clusters_to_regimes(features, clusters)
+            
+            # Extend regime to full DataFrame length
+            full_regimes = ['neutral'] * len(df)
+            start_idx = len(df) - len(clusters)
+            for i, regime in enumerate(clusters):
+                if start_idx + i < len(df):
+                    full_regimes[start_idx + i] = regime_mapping.get(regime, 'neutral')
+            
+            return full_regimes
+            
+        except Exception as e:
+            logger.warning(f"ML regime detection failed: {e}")
+            return self._statistical_regime_detection(df)
+    
+    def _prepare_ml_features(self, df):
+        """Prepare features for ML analysis"""
+        window = min(50, len(df))
+        recent_df = df.tail(window).copy()
+        
+        # Price-based features
+        recent_df['returns'] = recent_df['close'].pct_change()
+        recent_df['volatility'] = recent_df['returns'].rolling(10).std()
+        recent_df['price_trend'] = recent_df['close'].rolling(10).apply(
+            lambda x: (x.iloc[-1] - x.iloc[0]) / x.iloc[0] if x.iloc[0] != 0 else 0, raw=False
+        )
+        
+        # Volume-based features
+        recent_df['volume_trend'] = recent_df['volume'].rolling(10).mean()
+        recent_df['volume_volatility'] = recent_df['volume'].rolling(10).std()
+        
+        # High-low spread
+        recent_df['hl_spread'] = (recent_df['high'] - recent_df['low']) / recent_df['close']
+        
+        # Select features and drop NaN
+        feature_cols = ['returns', 'volatility', 'price_trend', 'volume_trend', 'hl_spread']
+        features = recent_df[feature_cols].dropna()
+        
+        return features.values
+    
+    def _map_clusters_to_regimes(self, features, clusters):
+        """Map cluster numbers to meaningful market regimes"""
+        df_features = pd.DataFrame(features, columns=['returns', 'volatility', 'price_trend', 'volume_trend', 'hl_spread'])
+        
+        regime_mapping = {}
+        for cluster_id in set(clusters):
+            cluster_mask = clusters == cluster_id
+            cluster_data = df_features[cluster_mask]
+            
+            avg_volatility = cluster_data['volatility'].mean()
+            avg_trend = cluster_data['price_trend'].mean()
+            
+            if avg_volatility > df_features['volatility'].quantile(0.7):
+                regime_mapping[cluster_id] = 'volatile'
+            elif abs(avg_trend) > df_features['price_trend'].std():
+                regime_mapping[cluster_id] = 'trending' if avg_trend > 0 else 'declining'
+            else:
+                regime_mapping[cluster_id] = 'neutral'
+        
+        return regime_mapping
+    
+    def _statistical_regime_detection(self, df):
+        """Statistical fallback for regime detection"""
+        regimes = []
+        window = min(20, len(df) // 2)
+        
+        for i in range(len(df)):
+            start_idx = max(0, i - window)
+            subset = df.iloc[start_idx:i+1]
+            
+            if len(subset) < 5:
+                regimes.append('neutral')
+                continue
+            
+            # Calculate volatility and trend
+            returns = subset['close'].pct_change().dropna()
+            volatility = returns.std() if len(returns) > 1 else 0
+            
+            price_change = (subset['close'].iloc[-1] - subset['close'].iloc[0]) / subset['close'].iloc[0]
+            
+            # Classify regime
+            if volatility > self.volatility_threshold:
+                regimes.append('volatile')
+            elif abs(price_change) > 0.05:  # 5% change threshold
+                regimes.append('trending' if price_change > 0 else 'declining')
+            else:
+                regimes.append('neutral')
+        
+        return regimes
+    
+    def _simple_regime_detection(self, df):
+        """Simple fallback regime detection"""
+        regimes = ['neutral'] * len(df)
+        
+        if len(df) >= 10:
+            # Simple volatility-based classification
+            recent_returns = df['close'].pct_change().tail(10)
+            volatility = recent_returns.std()
+            
+            if volatility > 0.03:  # 3% daily volatility threshold
+                regimes[-10:] = ['volatile'] * 10
+            else:
+                trend = (df['close'].iloc[-1] - df['close'].iloc[-10]) / df['close'].iloc[-10]
+                if abs(trend) > 0.05:
+                    regime = 'trending' if trend > 0 else 'declining'
+                    regimes[-10:] = [regime] * 10
+        
+        return regimes
+    
+    def calculate_adaptive_volatility(self, df):
+        """Calculate adaptive volatility with dynamic lookback"""
+        if len(df) < self.min_volatility_lookback:
+            return df['close'].pct_change().std()
+        
+        # Use adaptive window based on market conditions
+        base_returns = df['close'].pct_change()
+        recent_vol = base_returns.tail(self.min_volatility_lookback).std()
+        longer_vol = base_returns.tail(min(self.max_volatility_lookback, len(df))).std()
+        
+        # Weight recent vs longer-term volatility
+        weight = 0.7  # Favor recent volatility
+        adaptive_vol = weight * recent_vol + (1 - weight) * longer_vol
+        
+        return adaptive_vol
+    
+    def detect_anomalies(self, df):
+        """Detect price anomalies using isolation forest and statistical methods"""
+        try:
+            if SKLEARN_AVAILABLE and len(df) >= 20:
+                return self._ml_anomaly_detection(df)
+            else:
+                return self._statistical_anomaly_detection(df)
+        except Exception as e:
+            logger.warning(f"Anomaly detection failed: {e}")
+            return [1] * len(df)  # No anomalies detected
+    
+    def _ml_anomaly_detection(self, df):
+        """ML-based anomaly detection"""
+        # Prepare features
+        features = []
+        for i in range(1, len(df)):
+            price_change = (df['close'].iloc[i] - df['close'].iloc[i-1]) / df['close'].iloc[i-1]
+            volume_ratio = df['volume'].iloc[i] / (df['volume'].iloc[i-1] + 1e-8)
+            hl_ratio = (df['high'].iloc[i] - df['low'].iloc[i]) / df['close'].iloc[i]
+            features.append([price_change, volume_ratio, hl_ratio])
+        
+        if len(features) < 10:
+            return [1] * len(df)
+        
+        # Apply Isolation Forest
+        iso_forest = IsolationForest(contamination=0.1, random_state=42)
+        anomalies = iso_forest.fit_predict(features)
+        
+        # Extend to full length
+        full_anomalies = [1] + list(anomalies)
+        return full_anomalies
+    
+    def _statistical_anomaly_detection(self, df):
+        """Statistical anomaly detection using z-scores"""
+        anomalies = []
+        window = min(20, len(df))
+        
+        returns = df['close'].pct_change()
+        
+        for i in range(len(df)):
+            if i < window:
+                anomalies.append(1)  # Normal
+                continue
+            
+            recent_returns = returns.iloc[i-window:i]
+            mean_return = recent_returns.mean()
+            std_return = recent_returns.std()
+            
+            current_return = returns.iloc[i]
+            
+            # Check for anomaly using z-score
+            if std_return > 0:
+                z_score = abs((current_return - mean_return) / std_return)
+                anomalies.append(-1 if z_score > 3 else 1)  # -1 for anomaly
+            else:
+                anomalies.append(1)
+        
+        return anomalies
+
+class EnhancedSupertrendIndicator:
+    """Enhanced Supertrend with adaptive parameters and multiple timeframe support"""
+    
+    def __init__(self, period=10, multiplier=3.0, adaptive=True):
+        self.period = period
+        self.multiplier = multiplier
+        self.adaptive = adaptive
+        self.min_period = max(7, period - 5)
+        self.max_period = period + 10
+    
+    def calculate(self, df):
+        """Calculate enhanced Supertrend with adaptive parameters"""
+        if len(df) < self.period:
+            logger.warning(f"Insufficient data for Supertrend calculation: {len(df)} < {self.period}")
+            return self._basic_supertrend(df)
+        
+        try:
+            if self.adaptive and len(df) >= 50:
+                return self._adaptive_supertrend(df)
+            else:
+                return self._basic_supertrend(df)
+        except Exception as e:
+            logger.error(f"Enhanced Supertrend calculation failed: {e}")
+            return self._basic_supertrend(df)
+    
+    def _adaptive_supertrend(self, df):
+        """Adaptive Supertrend with dynamic parameters"""
+        # Calculate market volatility
+        returns = df['close'].pct_change().dropna()
+        volatility = returns.rolling(20).std().iloc[-1] if len(returns) >= 20 else returns.std()
+        
+        # Adapt parameters based on volatility
+        if volatility > 0.03:  # High volatility
+            adapted_period = max(self.min_period, self.period - 3)
+            adapted_multiplier = self.multiplier * 1.2
+        elif volatility < 0.01:  # Low volatility
+            adapted_period = min(self.max_period, self.period + 5)
+            adapted_multiplier = self.multiplier * 0.8
+        else:  # Normal volatility
+            adapted_period = self.period
+            adapted_multiplier = self.multiplier
+        
+        return self._calculate_supertrend(df, adapted_period, adapted_multiplier)
+    
+    def _basic_supertrend(self, df):
+        """Basic Supertrend calculation"""
+        return self._calculate_supertrend(df, self.period, self.multiplier)
+    
+    def _calculate_supertrend(self, df, period, multiplier):
+        """Core Supertrend calculation logic"""
+        # Calculate ATR
+        df['atr'] = ta.volatility.average_true_range(
+            df['high'], df['low'], df['close'], window=period
+        )
+        
+        # Calculate basic upper and lower bands
+        df['basic_upper'] = (df['high'] + df['low']) / 2 + (multiplier * df['atr'])
+        df['basic_lower'] = (df['high'] + df['low']) / 2 - (multiplier * df['atr'])
+        
+        # Initialize columns
+        df['supertrend'] = np.nan
+        df['supertrend_direction'] = np.nan
+        df['final_upper'] = df['basic_upper'].copy()
+        df['final_lower'] = df['basic_lower'].copy()
+        
+        # Calculate final bands and supertrend
+        for i in range(period, len(df)):
+            # Upper band logic
+            if (df['basic_upper'].iloc[i] < df['final_upper'].iloc[i-1] or 
+                df['close'].iloc[i-1] > df['final_upper'].iloc[i-1]):
+                df.loc[df.index[i], 'final_upper'] = df['basic_upper'].iloc[i]
+            else:
+                df.loc[df.index[i], 'final_upper'] = df['final_upper'].iloc[i-1]
+            
+            # Lower band logic
+            if (df['basic_lower'].iloc[i] > df['final_lower'].iloc[i-1] or 
+                df['close'].iloc[i-1] < df['final_lower'].iloc[i-1]):
+                df.loc[df.index[i], 'final_lower'] = df['basic_lower'].iloc[i]
+            else:
+                df.loc[df.index[i], 'final_lower'] = df['final_lower'].iloc[i-1]
+            
+            # Supertrend logic
+            if i == period:
+                if df['close'].iloc[i] <= df['final_upper'].iloc[i]:
+                    df.loc[df.index[i], 'supertrend'] = df['final_upper'].iloc[i]
+                    df.loc[df.index[i], 'supertrend_direction'] = -1
+                else:
+                    df.loc[df.index[i], 'supertrend'] = df['final_lower'].iloc[i]
+                    df.loc[df.index[i], 'supertrend_direction'] = 1
+            else:
+                if df['close'].iloc[i] <= df['final_upper'].iloc[i]:
+                    df.loc[df.index[i], 'supertrend'] = df['final_upper'].iloc[i]
+                    df.loc[df.index[i], 'supertrend_direction'] = -1
+                else:
+                    df.loc[df.index[i], 'supertrend'] = df['final_lower'].iloc[i]
+                    df.loc[df.index[i], 'supertrend_direction'] = 1
+        
+        # Add trend signal for compatibility
+        df['trend'] = np.where(df['supertrend_direction'] == 1, 1, -1)
+        
+        return df
+
 class SupertrendIndicator:
-    """Supertrend indicator implementation for faster trend detection"""
+    """Enhanced Supertrend indicator implementation for faster trend detection"""
     def __init__(self, period=10, multiplier=3.0):
         self.period = period
         self.multiplier = multiplier
+        self.enhanced_indicator = EnhancedSupertrendIndicator(period, multiplier, adaptive=True)
         
     def calculate(self, df):
-        """Calculate Supertrend indicator"""
+        """Calculate Supertrend indicator using enhanced version with fallback"""
+        try:
+            # Try enhanced calculation first
+            return self.enhanced_indicator.calculate(df)
+        except Exception as e:
+            logger.warning(f"Enhanced Supertrend failed, using fallback: {e}")
+            return self._fallback_calculate(df)
+    
+    def _fallback_calculate(self, df):
+        """Fallback original Supertrend calculation"""
         # Calculate ATR
         df['atr'] = ta.volatility.average_true_range(
             df['high'], df['low'], df['close'], window=self.period
@@ -78,6 +443,9 @@ class SupertrendIndicator:
                       df['close'].iloc[i] < df['final_lower'].iloc[i]):
                     df.loc[df.index[i], 'supertrend'] = df['final_upper'].iloc[i]
                     df.loc[df.index[i], 'supertrend_direction'] = -1  # Downtrend
+        
+        # Add trend signal for compatibility
+        df['trend'] = np.where(df['supertrend_direction'] == 1, 1, -1)
         
         return df
 
@@ -150,6 +518,18 @@ class TradingStrategy:
                     'data': df,
                     'time': current_time
                 }
+                logger.debug(f"Cached data for {cache_key}")# Manage cache size - remove oldest entry if needed
+                if len(self._cache) >= self._max_cache_entries:
+                    oldest_key = min(self._cache.keys(), 
+                                    key=lambda k: self._cache[k].get('time', 0))
+                    del self._cache[oldest_key]
+                    logger.debug(f"Cache full, removed oldest entry {oldest_key}")
+                
+                # Store in cache with timestamp
+                self._cache[cache_key] = {
+                    'data': df,
+                    'time': current_time
+                }
                 logger.debug(f"Cached data for {cache_key}")
             
             return df
@@ -166,11 +546,268 @@ class TradingStrategy:
     
     def get_signal(self, klines):
         """
-        Should be implemented by subclasses.
-        Returns 'BUY', 'SELL', or None.
+        Main signal generation method that orchestrates all specialized signal methods
+        with priority-based decision making and comprehensive validation.
+        
+        Signal Priority Order:
+        1. V-shaped reversal signals (highest priority - extreme conditions)
+        2. Squeeze breakout signals (high priority - volatility breakouts)
+        3. Grid signals (medium-high priority - core strategy)
+        4. Multi-indicator signals (medium priority - confirmation-based)
+        5. Market condition specific signals (lower priority - trend following)
+        6. Extreme market signals (lowest priority - specialized conditions)
+        
+        Returns: 'BUY', 'SELL', or None
         """
-        raise NotImplementedError("Each strategy must implement get_signal method")
-
+        try:
+            # Prepare data with indicators
+            df = self.prepare_data(klines)
+            if df.empty or len(df) < self.adx_period:
+                logger.warning("Insufficient data for signal generation")
+                return None
+            
+            # Add all technical indicators
+            df = self.add_indicators(df)
+            
+            # Get latest market data
+            latest = df.iloc[-1]
+            current_time = latest['open_time']
+            market_condition = latest['market_condition']
+            current_price = latest['close']
+            
+            # Check for cool-off period after consecutive losses
+            if self.in_cooloff_period(current_time):
+                logger.info(f"In cool-off period. Skipping signal generation.")
+                return None
+            
+            # Initialize signal candidates with their priority scores
+            signal_candidates = []
+            
+            # === PRIORITY 1: V-shaped reversal signals (Emergency/Extreme conditions) ===
+            v_reversal_signal = self.get_v_reversal_signal(df)
+            if v_reversal_signal:
+                signal_candidates.append({
+                    'signal': v_reversal_signal,
+                    'priority': 1,
+                    'source': 'V_REVERSAL',
+                    'confidence': 0.9,
+                    'description': f'V-shaped reversal in {market_condition} market'
+                })
+                logger.info(f"V-reversal signal detected: {v_reversal_signal}")
+            
+            # === PRIORITY 2: Squeeze breakout signals (High volatility events) ===
+            squeeze_signal = self.get_squeeze_breakout_signal(df)
+            if squeeze_signal:
+                signal_candidates.append({
+                    'signal': squeeze_signal,
+                    'priority': 2,
+                    'source': 'SQUEEZE_BREAKOUT',
+                    'confidence': 0.85,
+                    'description': f'Squeeze breakout with volume confirmation'
+                })
+                logger.info(f"Squeeze breakout signal detected: {squeeze_signal}")
+            
+            # === PRIORITY 3: Grid signals (Core strategy) ===
+            grid_signal = self.get_grid_signal(df)
+            if grid_signal:
+                signal_candidates.append({
+                    'signal': grid_signal,
+                    'priority': 3,
+                    'source': 'GRID',
+                    'confidence': 0.75,
+                    'description': f'Grid level triggered at {current_price:.6f}'
+                })
+                logger.debug(f"Grid signal detected: {grid_signal}")
+            
+            # === PRIORITY 4: Multi-indicator confirmation signals ===
+            multi_indicator_signal = self.get_multi_indicator_signal(df)
+            if multi_indicator_signal:
+                signal_candidates.append({
+                    'signal': multi_indicator_signal,
+                    'priority': 4,
+                    'source': 'MULTI_INDICATOR',
+                    'confidence': 0.8,
+                    'description': f'Multi-indicator confirmation with strong consensus'
+                })
+                logger.info(f"Multi-indicator signal detected: {multi_indicator_signal}")
+            
+            # === PRIORITY 5: Market condition specific signals ===
+            condition_signal = None
+            if market_condition == 'SIDEWAYS':
+                condition_signal = self.get_sideways_signal(df)
+                source = 'SIDEWAYS_MARKET'
+            elif market_condition in ['BULLISH', 'EXTREME_BULLISH']:
+                condition_signal = self.get_bullish_signal(df)
+                source = 'BULLISH_MARKET'
+            elif market_condition in ['BEARISH', 'EXTREME_BEARISH']:
+                condition_signal = self.get_bearish_signal(df)
+                source = 'BEARISH_MARKET'
+            
+            if condition_signal:
+                signal_candidates.append({
+                    'signal': condition_signal,
+                    'priority': 5,
+                    'source': source,
+                    'confidence': 0.7,
+                    'description': f'{market_condition} market condition signal'
+                })
+                logger.debug(f"Market condition signal detected: {condition_signal} from {source}")
+            
+            # === PRIORITY 6: Extreme market signals (Specialized conditions) ===
+            extreme_signal = self.get_extreme_market_signal(df)
+            if extreme_signal:
+                signal_candidates.append({
+                    'signal': extreme_signal,
+                    'priority': 6,
+                    'source': 'EXTREME_MARKET',
+                    'confidence': 0.65,
+                    'description': f'Extreme market condition signal in {market_condition}'
+                })
+                logger.debug(f"Extreme market signal detected: {extreme_signal}")
+            
+            # === SIGNAL CONSOLIDATION AND VALIDATION ===
+            if not signal_candidates:
+                logger.debug("No signals detected from any method")
+                return None
+            
+            # Sort by priority (lower number = higher priority)
+            signal_candidates.sort(key=lambda x: x['priority'])
+            
+            # Apply signal validation and conflict resolution
+            final_signal = self._validate_and_consolidate_signals(signal_candidates, df)
+            
+            if final_signal:
+                # Log the final decision
+                primary_candidate = signal_candidates[0]
+                logger.info(f"Final signal: {final_signal['signal']} from {final_signal['source']} "
+                           f"(Priority: {final_signal['priority']}, Confidence: {final_signal['confidence']:.2f}) "
+                           f"- {final_signal['description']}")
+                
+                # Update position sizing based on market conditions
+                if self.risk_manager:
+                    position_size = self.calculate_dynamic_position_size(df)
+                    self.risk_manager.update_position_sizing(position_size)
+                    self.position_size_pct = position_size
+                    logger.debug(f"Updated position size to {position_size:.2f}x for {market_condition} market")
+                
+                return final_signal['signal']
+            
+            logger.debug("No valid signals after consolidation and validation")
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error in get_signal: {e}", exc_info=True)
+            return None
+    
+    def _validate_and_consolidate_signals(self, signal_candidates, df):
+        """
+        Validate and consolidate multiple signals with conflict resolution
+        
+        Args:
+            signal_candidates: List of signal dictionaries with priority, confidence, etc.
+            df: DataFrame with market data and indicators
+            
+        Returns:
+            Final validated signal dictionary or None
+        """
+        if not signal_candidates:
+            return None
+        
+        try:
+            latest = df.iloc[-1]
+            market_condition = latest['market_condition']
+            
+            # Group signals by type
+            buy_signals = [s for s in signal_candidates if s['signal'] == 'BUY']
+            sell_signals = [s for s in signal_candidates if s['signal'] == 'SELL']
+            
+            # If no conflicting signals, return the highest priority signal
+            if len(buy_signals) > 0 and len(sell_signals) == 0:
+                return buy_signals[0]  # Already sorted by priority
+            elif len(sell_signals) > 0 and len(buy_signals) == 0:
+                return sell_signals[0]  # Already sorted by priority
+            
+            # Handle conflicting signals (both BUY and SELL present)
+            if len(buy_signals) > 0 and len(sell_signals) > 0:
+                logger.warning(f"Conflicting signals detected: {len(buy_signals)} BUY, {len(sell_signals)} SELL")
+                
+                # Use priority-based resolution
+                highest_priority_buy = min(buy_signals, key=lambda x: x['priority'])
+                highest_priority_sell = min(sell_signals, key=lambda x: x['priority'])
+                
+                # If priorities are equal, use confidence
+                if highest_priority_buy['priority'] == highest_priority_sell['priority']:
+                    if highest_priority_buy['confidence'] > highest_priority_sell['confidence']:
+                        logger.info(f"Resolved conflict using confidence: BUY ({highest_priority_buy['confidence']:.2f}) > SELL ({highest_priority_sell['confidence']:.2f})")
+                        return highest_priority_buy
+                    elif highest_priority_sell['confidence'] > highest_priority_buy['confidence']:
+                        logger.info(f"Resolved conflict using confidence: SELL ({highest_priority_sell['confidence']:.2f}) > BUY ({highest_priority_buy['confidence']:.2f})")
+                        return highest_priority_sell
+                    else:
+                        # Equal confidence - use market condition bias
+                        if market_condition in ['BULLISH', 'EXTREME_BULLISH']:
+                            logger.info("Resolved tie using bullish market bias")
+                            return highest_priority_buy
+                        elif market_condition in ['BEARISH', 'EXTREME_BEARISH']:
+                            logger.info("Resolved tie using bearish market bias")
+                            return highest_priority_sell
+                        else:
+                            # Neutral market - cancel signals
+                            logger.info("Equal signals in neutral market - no signal generated")
+                            return None
+                
+                # Different priorities - use the higher priority (lower number)
+                if highest_priority_buy['priority'] < highest_priority_sell['priority']:
+                    logger.info(f"Resolved conflict using priority: BUY (P{highest_priority_buy['priority']}) > SELL (P{highest_priority_sell['priority']})")
+                    return highest_priority_buy
+                else:
+                    logger.info(f"Resolved conflict using priority: SELL (P{highest_priority_sell['priority']}) > BUY (P{highest_priority_buy['priority']})")
+                    return highest_priority_sell
+            
+            # Apply additional validation filters
+            selected_signal = buy_signals[0] if buy_signals else sell_signals[0]
+            
+            # Volume validation - ensure sufficient volume for the signal
+            volume_ratio = latest.get('volume_ratio', 1.0)
+            min_volume_for_priority = {1: 1.0, 2: 1.2, 3: 1.0, 4: 1.3, 5: 1.1, 6: 1.0}
+            required_volume = min_volume_for_priority.get(selected_signal['priority'], 1.1)
+            
+            if volume_ratio < required_volume:
+                logger.warning(f"Signal rejected due to insufficient volume: {volume_ratio:.2f} < {required_volume:.2f}")
+                return None
+            
+            # RSI extreme validation - avoid signals in very extreme RSI conditions unless high priority
+            rsi = latest.get('rsi', 50)
+            if selected_signal['priority'] > 2:  # Lower priority signals
+                if (selected_signal['signal'] == 'BUY' and rsi > 85) or (selected_signal['signal'] == 'SELL' and rsi < 15):
+                    logger.warning(f"Signal rejected due to extreme RSI: {rsi:.1f}")
+                    return None
+            
+            # Market sentiment validation
+            try:
+                sentiment = self.calculate_market_sentiment(df).iloc[-1]
+                # Check if signal aligns with strong market sentiment
+                if abs(sentiment) > 0.7:  # Strong sentiment
+                    if (selected_signal['signal'] == 'BUY' and sentiment < -0.5) or \
+                       (selected_signal['signal'] == 'SELL' and sentiment > 0.5):
+                        # Signal against strong sentiment - reduce confidence or reject low priority signals
+                        if selected_signal['priority'] > 3:
+                            logger.warning(f"Signal against strong sentiment rejected: {selected_signal['signal']} vs sentiment {sentiment:.2f}")
+                            return None
+                        else:
+                            # High priority signal - reduce confidence but allow
+                            selected_signal['confidence'] *= 0.8
+                            logger.info(f"High priority signal against sentiment - confidence reduced to {selected_signal['confidence']:.2f}")
+            except Exception:
+                pass  # Sentiment validation failed, continue without it
+            
+            logger.info(f"Signal validated and approved: {selected_signal['signal']} from {selected_signal['source']}")
+            return selected_signal
+            
+        except Exception as e:
+            logger.error(f"Error in signal validation: {e}")
+            # Return the first signal as fallback
+            return signal_candidates[0] if signal_candidates else None
 
 class RaysolDynamicGridStrategy(TradingStrategy):
     """
@@ -204,11 +841,11 @@ class RaysolDynamicGridStrategy(TradingStrategy):
                  adx_period=14,
                  adx_threshold=25,
                  sideways_threshold=15,
-                 # RAYSOL-specific parameters
+                 # RAYSOL-specific parameters - updated grid spacing for better performance
                  volatility_multiplier=1.1,
                  trend_condition_multiplier=1.3,
-                 min_grid_spacing=0.6,
-                 max_grid_spacing=3.5,
+                 min_grid_spacing=0.8,  # Increased from 0.6 to 0.8 for wider spacing
+                 max_grid_spacing=2.5,  # Reduced from 3.5 to 2.5 for tighter control
                  # New parameters for enhanced features
                  supertrend_period=10,
                  supertrend_multiplier=3.0,
@@ -218,6 +855,7 @@ class RaysolDynamicGridStrategy(TradingStrategy):
                  max_consecutive_losses=2):
         
         super().__init__('RaysolDynamicGridStrategy')
+        
         # Base parameters
         self.grid_levels = grid_levels
         self.grid_spacing_pct = grid_spacing_pct
@@ -246,7 +884,8 @@ class RaysolDynamicGridStrategy(TradingStrategy):
         self.cooloff_period = cooloff_period
         self.max_consecutive_losses = max_consecutive_losses
         
-        # Initialize Supertrend indicator
+        # Initialize advanced components
+        self.market_analyzer = AdvancedMarketAnalyzer()
         self.supertrend_indicator = SupertrendIndicator(
             period=self.supertrend_period, 
             multiplier=self.supertrend_multiplier
@@ -255,6 +894,7 @@ class RaysolDynamicGridStrategy(TradingStrategy):
         # Initialize trade tracking
         self.consecutive_losses = 0
         self.last_trade_time = None
+        self.last_loss_time = None
         
         # Initialize storage for levels
         self.fib_support_levels = []
@@ -265,19 +905,26 @@ class RaysolDynamicGridStrategy(TradingStrategy):
         self.current_trend = None
         self.current_market_condition = None
         self.last_grid_update = None
-        self.consecutive_losses = 0
-        self.last_loss_time = None
-        self.fib_support_levels = []
-        self.fib_resistance_levels = []
         self.position_size_pct = 1.0  # Default position size percentage
+        
+        # Market phase tracking
+        self.current_phase = 'UNKNOWN'
+        self.phase_confidence = 0.0
+        
+        # Performance tracking
+        self.performance_metrics = {
+            'total_trades': 0,
+            'winning_trades': 0,
+            'total_pnl': 0.0,
+            'max_drawdown_experienced': 0.0,
+            'sharpe_ratio': 0.0
+        }
         
         # Cached indicators to avoid recalculation
         self._last_kline_time = None
         self._cached_dataframe = None
-        self.supertrend_indicator = SupertrendIndicator(
-            period=self.supertrend_period,
-            multiplier=self.supertrend_multiplier
-        )
+        
+        logger.info("Enhanced RAYSOL Dynamic Grid Strategy initialized with advanced ML features")
         
     def prepare_data(self, klines):
         """
@@ -419,6 +1066,19 @@ class RaysolDynamicGridStrategy(TradingStrategy):
         
         # Reversal detection indicators
         df['potential_reversal'] = self.detect_reversal_patterns(df)
+        
+        # Advanced market analysis
+        df['market_sentiment'] = self.calculate_market_sentiment(df)
+        df['flash_crash'] = self.detect_flash_crash(df)
+        df['pump_event'] = self.detect_pump_events(df)
+        
+        # Market phase detection
+        phase, confidence = self.detect_market_phase(df)
+        self.current_phase = phase
+        self.phase_confidence = confidence
+        
+        # Position scoring for grid optimization
+        df['position_score'] = self.calculate_position_score(df)
         
         return df
     
@@ -765,11 +1425,11 @@ class RaysolDynamicGridStrategy(TradingStrategy):
             # Sideways market - slightly smaller position
             condition_factor = 0.9
             
-        # Calculate final position size
-        position_size = base_position * volatility_factor * condition_factor
+        # Calculate final position size - reduced base_position from 1.0 to 0.8 for less aggressive sizing
+        position_size = 0.8 * volatility_factor * condition_factor
         
-        # Cap the position size
-        return min(max(position_size, 0.5), 1.2)  # Between 50% and 120%
+        # Cap the position size - reduced from 1.2 to 0.8 max for less aggressive sizing
+        return min(max(position_size, 0.5), 0.8)  # Between 50% and 80%
     
     def calculate_dynamic_grid_levels(self, df):
         """
@@ -1200,8 +1860,8 @@ class RaysolDynamicGridStrategy(TradingStrategy):
         
         # Adjust signal thresholds based on market condition - higher thresholds to reduce false signals
         market_condition = latest['market_condition']
-        bull_threshold = 7.0  # Increased base threshold for stronger confirmation
-        bear_threshold = 7.0  # Increased base threshold for stronger confirmation
+        bull_threshold = 8.0  # Increased from 7.0 to reduce false signals
+        bear_threshold = 8.0  # Increased from 7.0 to reduce false signals
         
         # Volume requirement - ensure we have enough volume to validate signals
         min_volume_ratio = 1.2  # Minimum volume needed relative to average
@@ -1507,85 +2167,339 @@ class RaysolDynamicGridStrategy(TradingStrategy):
         self.grids = None
         logger.info("All strategy caches have been reset")
     
-    def get_signal(self, klines):
-        """
-        Enhanced signal generation integrating all the new features
-        """
-        # Prepare and add indicators to the data
-        df = self.prepare_data(klines)
-        df = self.add_indicators(df)
-        
-        if len(df) < self.trend_ema_slow + 5:
-            # Not enough data to generate reliable signals
-            return None
-        
-        # Get latest data
-        latest = df.iloc[-1]
-        market_condition = latest['market_condition']
-        current_time = latest['open_time']
-        
-        # Update risk manager with current market condition
-        if self.risk_manager:
-            self.risk_manager.set_market_condition(market_condition)
-        
-        # Check for cool-off period first
-        if self.in_cooloff_period(current_time):
-            logger.info(f"In cool-off period after {self.consecutive_losses} consecutive losses. No trading signals.")
-            return None
-        
-        # 1. Check for V-shaped reversals in extreme market conditions
-        reversal_signal = self.get_v_reversal_signal(df)
-        if reversal_signal:
-            logger.info(f"V-reversal detected in {market_condition} market. Signal: {reversal_signal}")
-            return reversal_signal
-        
-        # 2. Check for breakouts from squeeze conditions
-        squeeze_signal = self.get_squeeze_breakout_signal(df)
-        if squeeze_signal:
-            logger.info(f"Squeeze breakout detected. Signal: {squeeze_signal}")
-            return squeeze_signal
-        
-        # 3. Check for multi-indicator confirmation signals
-        multi_signal = self.get_multi_indicator_signal(df)
-        if multi_signal:
-            logger.info(f"Multi-indicator confirmation. Signal: {multi_signal}")
-            return multi_signal
-        
-        # 4. Get grid signal (works in all market conditions)
-        grid_signal = self.get_grid_signal(df)
-        
-        # 5. Get specific signals based on market condition
-        if market_condition in ['EXTREME_BULLISH', 'EXTREME_BEARISH']:
-            condition_signal = self.get_extreme_market_signal(df)
-            logger.debug(f"EXTREME market detected. Grid signal: {grid_signal}, Extreme signal: {condition_signal}")
+    def calculate_market_sentiment(self, df):
+        """Advanced market sentiment calculation with multiple indicators"""
+        try:
+            # Price momentum component
+            price_momentum = df['close'].pct_change(5).rolling(10).mean()
             
-            # In extreme market conditions, prefer the condition-specific signal
-            if condition_signal:
-                return condition_signal
-                
-        elif market_condition in ['BULLISH', 'BEARISH']:
-            if market_condition == 'BULLISH':
-                condition_signal = self.get_bullish_signal(df)
-            else:
-                condition_signal = self.get_bearish_signal(df)
-                
-            logger.debug(f"{market_condition} market detected. Grid signal: {grid_signal}, Condition signal: {condition_signal}")
+            # Volume sentiment
+            volume_avg = df['volume'].rolling(20).mean()
+            volume_sentiment = (df['volume'] / volume_avg - 1).clip(-1, 1)
             
-            # In trending markets, prefer the trending signal
-            if condition_signal:
-                return condition_signal
-                
-        elif market_condition == 'SIDEWAYS':
-            condition_signal = self.get_sideways_signal(df)
-            logger.debug(f"SIDEWAYS market detected. Grid signal: {grid_signal}, Sideways signal: {condition_signal}")
+            # RSI sentiment (normalized to -1 to 1)
+            rsi_sentiment = (df['rsi'] - 50) / 50
             
-            # In sideways markets, prioritize mean reversion signals
-            if condition_signal:
-                return condition_signal
-                
-        # 6. Default to grid signal if no specialized signal was returned
-        return grid_signal
+            # MACD sentiment
+            macd_sentiment = np.where(df['macd'] > df['macd_signal'], 1, -1)
+            
+            # Bollinger Bands position sentiment
+            bb_position = (df['close'] - df['bb_lower']) / (df['bb_upper'] - df['bb_lower'])
+            bb_sentiment = (bb_position - 0.5) * 2  # Normalize to -1 to 1
+            
+            # Supertrend sentiment
+            supertrend_sentiment = np.where(df['supertrend_direction'] == 1, 1, -1)
+            
+            # Combine all sentiments with weights
+            sentiment = (
+                price_momentum * 0.25 +
+                volume_sentiment * 0.15 +
+                rsi_sentiment * 0.2 +
+                macd_sentiment * 0.15 +
+                bb_sentiment * 0.15 +
+                supertrend_sentiment * 0.1
+            ).fillna(0).clip(-1, 1)
+            
+            return sentiment
+            
+        except Exception as e:
+            logger.warning(f"Market sentiment calculation failed: {e}")
+            return pd.Series([0] * len(df), index=df.index)
 
+    def detect_flash_crash(self, df, threshold=-0.05, volume_threshold=2.0):
+        """Detect flash crash events (sudden large drops with high volume)"""
+        try:
+            # Calculate price drops
+            returns = df['close'].pct_change(1)
+            
+            # Check for volume spikes
+            volume_ratio = df['volume_ratio'].fillna(1)
+            
+            # Flash crash conditions
+            flash_crashes = (
+                (returns < threshold) &  # Large price drop
+                (volume_ratio > volume_threshold)  # High volume
+            )
+            
+            return flash_crashes
+            
+        except Exception as e:
+            logger.warning(f"Flash crash detection failed: {e}")
+            return pd.Series([False] * len(df), index=df.index)
+
+    def detect_pump_events(self, df, threshold=0.05, volume_threshold=2.0):
+        """Detect pump events (sudden large gains with high volume)"""
+        try:
+            # Calculate price gains
+            returns = df['close'].pct_change(1)
+            
+            # Check for volume spikes
+            volume_ratio = df['volume_ratio'].fillna(1)
+            
+            # Pump conditions
+            pump_events = (
+                (returns > threshold) &  # Large price gain
+                (volume_ratio > volume_threshold)  # High volume
+            )
+            
+            return pump_events
+            
+        except Exception as e:
+            logger.warning(f"Pump event detection failed: {e}")
+            return pd.Series([False] * len(df), index=df.index)
+
+    def calculate_dynamic_stop_loss(self, df, current_price, position_type):
+        """Calculate dynamic stop loss based on market volatility and trend"""
+        try:
+            latest = df.iloc[-1]
+            atr = latest['atr']
+            volatility = latest['atr_pct'] / 100  # Convert to decimal
+            
+            # Base stop loss as percentage of price
+            base_stop_pct = 0.02  # 2% base stop loss
+            
+            # Adjust based on volatility
+            volatility_multiplier = max(0.5, min(2.0, volatility / 0.02))  # Scale based on 2% baseline
+            adjusted_stop_pct = base_stop_pct * volatility_multiplier
+            
+            # Adjust based on market sentiment
+            try:
+                sentiment = self.calculate_market_sentiment(df).iloc[-1]
+                if position_type == 'LONG':
+                    # In strong bullish sentiment, tighten stop loss
+                    sentiment_adj = 1 - (sentiment * 0.3) if sentiment > 0 else 1 + abs(sentiment * 0.3)
+                else:  # SHORT
+                    # In strong bearish sentiment, tighten stop loss
+                    sentiment_adj = 1 + (sentiment * 0.3) if sentiment < 0 else 1 + abs(sentiment * 0.3)
+                
+                adjusted_stop_pct *= sentiment_adj
+            except Exception:
+                sentiment_adj = 1.0
+            
+            # Calculate stop loss price
+            if position_type == 'LONG':
+                stop_loss_price = current_price * (1 - adjusted_stop_pct)
+            else:  # SHORT
+                stop_loss_price = current_price * (1 + adjusted_stop_pct)
+            
+            return stop_loss_price, adjusted_stop_pct
+            
+        except Exception as e:
+            logger.warning(f"Dynamic stop loss calculation failed: {e}")
+            # Fallback to simple 2% stop loss
+            if position_type == 'LONG':
+                return current_price * 0.98, 0.02
+            else:
+                return current_price * 1.02, 0.02
+
+    def detect_market_phase(self, df):
+        """Detect current market phase (accumulation, markup, distribution, markdown)"""
+        try:
+            if len(df) < 50:
+                return 'UNKNOWN', 0.5
+            
+            # Price trend analysis
+            price_trend = (df['close'].iloc[-1] - df['close'].iloc[-20]) / df['close'].iloc[-20]
+            
+            # Volume analysis
+            recent_volume = df['volume'].iloc[-10:].mean()
+            historical_volume = df['volume'].iloc[-50:-10].mean()
+            volume_trend = recent_volume / historical_volume if historical_volume > 0 else 1
+            
+            # Volatility analysis
+            recent_volatility = df['atr_pct'].iloc[-10:].mean()
+            historical_volatility = df['atr_pct'].iloc[-50:-10].mean()
+            volatility_ratio = recent_volatility / historical_volatility if historical_volatility > 0 else 1
+            
+            # Phase detection logic
+            if price_trend > 0.02 and volume_trend > 1.2:  # Rising prices with increasing volume
+                if volatility_ratio < 1.2:  # Controlled volatility
+                    return 'MARKUP', 0.8  # Strong uptrend
+                else:
+                    return 'DISTRIBUTION', 0.7  # Possible top formation
+            elif price_trend < -0.02 and volume_trend > 1.2:  # Falling prices with increasing volume
+                return 'MARKDOWN', 0.8  # Strong downtrend
+            elif abs(price_trend) < 0.02 and volume_trend < 0.8:  # Sideways with low volume
+                return 'ACCUMULATION', 0.6  # Potential bottom formation
+            else:
+                return 'TRANSITION', 0.5  # Unclear phase
+            
+        except Exception as e:
+            logger.warning(f"Market phase detection failed: {e}")
+            return 'UNKNOWN', 0.5
+
+    def calculate_position_score(self, df):
+        """Calculate a comprehensive position score for grid prioritization"""
+        try:
+            latest = df.iloc[-1]
+            score = 0.0
+            
+            # Trend alignment score (30% weight)
+            if latest.get('supertrend_direction', 0) == 1:  # Uptrend
+                score += 0.3
+            elif latest.get('supertrend_direction', 0) == -1:  # Downtrend
+                score -= 0.3
+            
+            # RSI score (20% weight)
+            rsi = latest.get('rsi', 50)
+            if 30 <= rsi <= 70:  # Healthy RSI range
+                score += 0.2
+            elif rsi < 30:  # Oversold
+                score += 0.1
+            elif rsi > 70:  # Overbought
+                score -= 0.1
+            
+            # Volume confirmation score (20% weight)
+            volume_ratio = latest.get('volume_ratio', 1)
+            if volume_ratio > 1.5:  # Strong volume
+                score += 0.2
+            elif volume_ratio > 1.0:  # Above average volume
+                score += 0.1
+            
+            # Market sentiment score (15% weight)
+            try:
+                sentiment = self.calculate_market_sentiment(df).iloc[-1]
+                score += sentiment * 0.15
+            except Exception:
+                pass
+            
+            # Volatility score (15% weight)
+            atr_pct = latest.get('atr_pct', 2.0)
+            if 1.0 <= atr_pct <= 3.0:  # Healthy volatility
+                score += 0.15
+            elif atr_pct > 5.0:  # Too volatile
+                score -= 0.15
+            
+            return max(-1.0, min(1.0, score))  # Clamp between -1 and 1
+            
+        except Exception as e:
+            logger.warning(f"Position score calculation failed: {e}")
+            return 0.0
+
+    def get_strategy_insights(self, df):
+        """Provide comprehensive strategy insights and recommendations"""
+        try:
+            insights = {
+                'market_phase': 'UNKNOWN',
+                'market_sentiment': 0.0,
+                'trend_strength': 'WEAK',
+                'volatility_level': 'NORMAL',
+                'volume_analysis': 'NORMAL',
+                'risk_level': 'MEDIUM',
+                'recommended_action': 'HOLD',
+                'confidence_score': 0.5,
+                'key_levels': {
+                    'support': [],
+                    'resistance': [],
+                    'fibonacci': []
+                },
+                'warnings': [],
+                'opportunities': []
+            }
+            
+            if len(df) < 20:
+                insights['warnings'].append("Insufficient data for comprehensive analysis")
+                return insights
+            
+            latest = df.iloc[-1]
+            
+            # Market phase analysis
+            phase, phase_confidence = self.detect_market_phase(df)
+            insights['market_phase'] = phase
+            
+            # Market sentiment
+            sentiment = self.calculate_market_sentiment(df).iloc[-1]
+            insights['market_sentiment'] = float(sentiment)
+            
+            # Trend strength analysis
+            adx = latest.get('adx', 20)
+            if adx > 40:
+                insights['trend_strength'] = 'VERY_STRONG'
+            elif adx > 25:
+                insights['trend_strength'] = 'STRONG'
+            elif adx > 15:
+                insights['trend_strength'] = 'MODERATE'
+            else:
+                insights['trend_strength'] = 'WEAK'
+            
+            # Volatility analysis
+            atr_pct = latest.get('atr_pct', 2.0)
+            if atr_pct > 5.0:
+                insights['volatility_level'] = 'VERY_HIGH'
+                insights['warnings'].append("Extremely high volatility detected")
+            elif atr_pct > 3.0:
+                insights['volatility_level'] = 'HIGH'
+            elif atr_pct < 1.0:
+                insights['volatility_level'] = 'LOW'
+            
+            # Volume analysis
+            volume_ratio = latest.get('volume_ratio', 1.0)
+            if volume_ratio > 2.0:
+                insights['volume_analysis'] = 'VERY_HIGH'
+                insights['opportunities'].append("High volume activity - potential breakout")
+            elif volume_ratio > 1.5:
+                insights['volume_analysis'] = 'HIGH'
+            elif volume_ratio < 0.7:
+                insights['volume_analysis'] = 'LOW'
+                insights['warnings'].append("Low volume - weak price action")
+            
+            # Risk level assessment
+            risk_factors = 0
+            if atr_pct > 4.0:
+                risk_factors += 1
+            if abs(sentiment) > 0.8:
+                risk_factors += 1
+            if adx < 15:  # Weak trend
+                risk_factors += 1
+            
+            if risk_factors >= 2:
+                insights['risk_level'] = 'HIGH'
+            elif risk_factors == 1:
+                insights['risk_level'] = 'MEDIUM'
+            else:
+                insights['risk_level'] = 'LOW'
+            
+            # Generate recommendation
+            position_score = self.calculate_position_score(df)
+            if position_score > 0.3:
+                insights['recommended_action'] = 'BUY'
+                insights['confidence_score'] = min(0.9, 0.5 + position_score)
+            elif position_score < -0.3:
+                insights['recommended_action'] = 'SELL'
+                insights['confidence_score'] = min(0.9, 0.5 + abs(position_score))
+            else:
+                insights['recommended_action'] = 'HOLD'
+                insights['confidence_score'] = 0.4
+            
+            # Add key levels
+            if self.fib_support_levels:
+                insights['key_levels']['support'] = self.fib_support_levels[-3:]  # Last 3 levels
+            if self.fib_resistance_levels:
+                insights['key_levels']['resistance'] = self.fib_resistance_levels[-3:]
+            
+            # Detect specific opportunities
+            if latest.get('bb_squeeze', False):
+                insights['opportunities'].append("Bollinger Band squeeze - potential volatility expansion")
+            
+            if latest.get('potential_reversal', False):
+                insights['opportunities'].append("Potential reversal pattern detected")
+            
+            # Flash crash or pump detection
+            if self.detect_flash_crash(df.tail(5)).any():
+                insights['warnings'].append("Recent flash crash detected - exercise caution")
+            
+            if self.detect_pump_events(df.tail(5)).any():
+                insights['warnings'].append("Recent pump event detected - potential correction ahead")
+            
+            return insights
+            
+        except Exception as e:
+            logger.error(f"Strategy insights generation failed: {e}")
+            return {
+                'market_phase': 'ERROR',
+                'error': str(e),
+                'confidence_score': 0.0
+            }
 
 # Update the factory function to include only RAYSOL strategy
 def get_strategy(strategy_name):
