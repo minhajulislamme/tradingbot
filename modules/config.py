@@ -75,34 +75,34 @@ TIMEFRAME = os.getenv('TIMEFRAME', '15m')
 
 # Risk management - Standard settings
 USE_STOP_LOSS = os.getenv('USE_STOP_LOSS', 'True').lower() == 'true'
-STOP_LOSS_PCT = float(os.getenv('STOP_LOSS_PCT', '0.02'))
+STOP_LOSS_PCT = float(os.getenv('STOP_LOSS_PCT', '0.03'))
+TRAILING_STOP = os.getenv('TRAILING_STOP', 'True').lower() == 'true'
+TRAILING_STOP_PCT = float(os.getenv('TRAILING_STOP_PCT', '0.03'))
+
+# Remove complex adaptive risk management settings since we're simplifying
+# Keep these variables for compatibility but use simple values
+STOP_LOSS_PCT_BULLISH = STOP_LOSS_PCT
+STOP_LOSS_PCT_BEARISH = STOP_LOSS_PCT
+STOP_LOSS_PCT_SIDEWAYS = STOP_LOSS_PCT
+
+# For compatibility with existing code
 USE_TAKE_PROFIT = os.getenv('USE_TAKE_PROFIT', 'True').lower() == 'true'
 TAKE_PROFIT_PCT = float(os.getenv('TAKE_PROFIT_PCT', '0.06'))
-TRAILING_STOP = os.getenv('TRAILING_STOP', 'True').lower() == 'true'
-TRAILING_STOP_PCT = float(os.getenv('TRAILING_STOP_PCT', '0.02'))
 TRAILING_TAKE_PROFIT = os.getenv('TRAILING_TAKE_PROFIT', 'True').lower() == 'true'
 TRAILING_TAKE_PROFIT_PCT = float(os.getenv('TRAILING_TAKE_PROFIT_PCT', '0.03'))
 
-# Adaptive risk management settings for different market conditions
-STOP_LOSS_PCT_BULLISH = float(os.getenv('STOP_LOSS_PCT_BULLISH', '0.02'))
-STOP_LOSS_PCT_BEARISH = float(os.getenv('STOP_LOSS_PCT_BEARISH', '0.015'))
-STOP_LOSS_PCT_SIDEWAYS = float(os.getenv('STOP_LOSS_PCT_SIDEWAYS', '0.01'))
+# Simple mapping for compatibility
+TAKE_PROFIT_PCT_BULLISH = TAKE_PROFIT_PCT
+TAKE_PROFIT_PCT_BEARISH = TAKE_PROFIT_PCT
+TAKE_PROFIT_PCT_SIDEWAYS = TAKE_PROFIT_PCT
 
-TAKE_PROFIT_PCT_BULLISH = float(os.getenv('TAKE_PROFIT_PCT_BULLISH', '0.06'))
-TAKE_PROFIT_PCT_BEARISH = float(os.getenv('TAKE_PROFIT_PCT_BEARISH', '0.04'))
-TAKE_PROFIT_PCT_SIDEWAYS = float(os.getenv('TAKE_PROFIT_PCT_SIDEWAYS', '0.02'))
+TRAILING_STOP_PCT_BULLISH = TRAILING_STOP_PCT
+TRAILING_STOP_PCT_BEARISH = TRAILING_STOP_PCT
+TRAILING_STOP_PCT_SIDEWAYS = TRAILING_STOP_PCT
 
-TRAILING_STOP_PCT_BULLISH = float(os.getenv('TRAILING_STOP_PCT_BULLISH', '0.02'))
-TRAILING_STOP_PCT_BEARISH = float(os.getenv('TRAILING_STOP_PCT_BEARISH', '0.015'))
-TRAILING_STOP_PCT_SIDEWAYS = float(os.getenv('TRAILING_STOP_PCT_SIDEWAYS', '0.01'))
-
-TRAILING_TAKE_PROFIT_PCT_BULLISH = float(os.getenv('TRAILING_TAKE_PROFIT_PCT_BULLISH', '0.03'))
-TRAILING_TAKE_PROFIT_PCT_BEARISH = float(os.getenv('TRAILING_TAKE_PROFIT_PCT_BEARISH', '0.02'))
-TRAILING_TAKE_PROFIT_PCT_SIDEWAYS = float(os.getenv('TRAILING_TAKE_PROFIT_PCT_SIDEWAYS', '0.015'))
-
-# Minimum stop distance settings to prevent overly tight stops
-MIN_STOP_DISTANCE_PCT = float(os.getenv('MIN_STOP_DISTANCE_PCT', '0.025'))  # 2.5% default minimum
-RAYSOL_MIN_STOP_DISTANCE_PCT = float(os.getenv('RAYSOL_MIN_STOP_DISTANCE_PCT', '0.035'))  # 3.5% for RAYSOL
+TRAILING_TAKE_PROFIT_PCT_BULLISH = TRAILING_TAKE_PROFIT_PCT
+TRAILING_TAKE_PROFIT_PCT_BEARISH = TRAILING_TAKE_PROFIT_PCT
+TRAILING_TAKE_PROFIT_PCT_SIDEWAYS = TRAILING_TAKE_PROFIT_PCT
 
 # Backtesting parameters
 BACKTEST_START_DATE = os.getenv('BACKTEST_START_DATE', '2023-01-01')

@@ -8,7 +8,7 @@ import argparse
 import json
 import traceback 
 from datetime import datetime, timedelta
-import pandas as pd
+import pandas as pdT
 import matplotlib.pyplot as plt
 from pathlib import Path
 
@@ -187,8 +187,12 @@ def setup():
         logger.error(f"Failed to initialize Binance client: {e}")
         exit(1)
     
-    # Initialize risk manager
+    # Initialize risk manager with current account balance
     risk_manager = RiskManager(binance_client)
+    
+    # Update initial balance for compounding
+    if AUTO_COMPOUND:
+        risk_manager.update_balance_for_compounding()
     
     # Get the selected trading strategy
     strategy = get_strategy(STRATEGY)
@@ -780,6 +784,10 @@ def check_for_signals(symbol=None):
             if risk_manager.should_open_position(symbol):
                 stop_loss_price = risk_manager.calculate_stop_loss(symbol, "BUY", current_price)
                 
+                # Get current risk level based on market conditions
+                current_risk = risk_manager.get_current_risk_level(symbol)
+                logger.info(f"Opening BUY position with risk level: {current_risk:.4f} (position size multiplier: {risk_manager.position_size_multiplier:.2f})")
+                
                 quantity = risk_manager.calculate_position_size(
                     symbol, "BUY", current_price, stop_loss_price
                 )
@@ -887,6 +895,10 @@ def check_for_signals(symbol=None):
             logger.info(f"Opening new SHORT position based on SELL signal (current position amount: {position_amount})")
             if risk_manager.should_open_position(symbol):
                 stop_loss_price = risk_manager.calculate_stop_loss(symbol, "SELL", current_price)
+                
+                # Get current risk level based on market conditions
+                current_risk = risk_manager.get_current_risk_level(symbol)
+                logger.info(f"Opening SELL position with risk level: {current_risk:.4f} (position size multiplier: {risk_manager.position_size_multiplier:.2f})")
                 
                 quantity = risk_manager.calculate_position_size(
                     symbol, "SELL", current_price, stop_loss_price
@@ -2063,6 +2075,8 @@ def main():
         symbol = args.symbol or TRADING_SYMBOL
         perform_test_trade(symbol)
         return
+        
+  
     
     # Initialize basic setup
     setup()

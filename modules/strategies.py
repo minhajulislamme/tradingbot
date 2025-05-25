@@ -4,6 +4,7 @@ import pandas as pd
 import ta
 import math
 import time
+import warnings
 from datetime import datetime, timedelta
 import random
 from typing import Dict, List, Tuple, Optional, Any
@@ -1393,43 +1394,71 @@ class RaysolDynamicGridStrategy(TradingStrategy):
         Returns:
             float: Position size multiplier (e.g., 0.8 means 80% of base position)
         """
-        latest = df.iloc[-1]
-        
-        # Get ATR as volatility measure
-        atr_pct = latest['atr_pct']
-        avg_atr_pct = df['atr_pct'].tail(20).mean()
-        
-        # Base position sizing on volatility relative to average
-        if atr_pct > avg_atr_pct * 1.5:
-            # High volatility - reduce position size
-            volatility_factor = 0.7
-        elif atr_pct < avg_atr_pct * 0.7:
-            # Low volatility - increase position size slightly
-            volatility_factor = 1.1
-        else:
-            # Normal volatility
-            volatility_factor = 1.0
+        try:
+            if df.empty or len(df) < 20:
+                logger.warning("Insufficient data for dynamic position sizing, using default")
+                return base_position
+                
+            latest = df.iloc[-1]
             
-        # Adjust based on market condition
-        market_condition = latest['market_condition']
-        if market_condition in ['EXTREME_BULLISH', 'EXTREME_BEARISH']:
-            # Extreme trend - reduce position size for safety
-            condition_factor = 0.75
-        elif market_condition in ['BULLISH', 'BEARISH']:
-            # Clear trend - standard position
-            condition_factor = 1.0
-        elif market_condition == 'SQUEEZE':
-            # Squeeze condition - smaller position for breakout
-            condition_factor = 0.8
-        else:  # SIDEWAYS
-            # Sideways market - slightly smaller position
-            condition_factor = 0.9
+            # Get ATR as volatility measure
+            if 'atr_pct' not in df.columns:
+                logger.warning("ATR percentage not found in dataframe, using default position size")
+                return base_position
+                
+            atr_pct = latest['atr_pct']
+            avg_atr_pct = df['atr_pct'].tail(20).mean()
             
-        # Calculate final position size - reduced base_position from 1.0 to 0.8 for less aggressive sizing
-        position_size = 0.8 * volatility_factor * condition_factor
-        
-        # Cap the position size - reduced from 1.2 to 0.8 max for less aggressive sizing
-        return min(max(position_size, 0.5), 0.8)  # Between 50% and 80%
+            # Base position sizing on volatility relative to average
+            if atr_pct > avg_atr_pct * 1.5:
+                # High volatility - reduce position size
+                volatility_factor = 0.7
+            elif atr_pct < avg_atr_pct * 0.7:
+                # Low volatility - increase position size slightly
+                volatility_factor = 1.1
+            else:
+                # Normal volatility
+                volatility_factor = 1.0
+                
+            # Adjust based on market condition
+            market_condition = latest.get('market_condition', 'UNKNOWN')
+            if market_condition in ['EXTREME_BULLISH', 'EXTREME_BEARISH']:
+                # Extreme trend - reduce position size for safety
+                condition_factor = 0.75
+            elif market_condition in ['BULLISH', 'BEARISH']:
+                # Clear trend - standard position
+                condition_factor = 1.0
+            elif market_condition == 'SQUEEZE':
+                # Squeeze condition - smaller position for breakout
+                condition_factor = 0.8
+            else:  # SIDEWAYS or UNKNOWN
+                # Sideways market - slightly smaller position
+                condition_factor = 0.9
+            
+            # Calculate final position size - reduced base_position from 1.0 to 0.8 for less aggressive sizing
+            position_size = base_position * volatility_factor * condition_factor
+            
+            # Apply additional adjustments based on trend consistency
+            if 'trend_consistency' in df.columns:
+                trend_consistency = latest.get('trend_consistency', 0.5)
+                
+                # If trend is very consistent, we can be more confident
+                if trend_consistency > 0.8:
+                    position_size *= 1.1
+                elif trend_consistency < 0.3:
+                    position_size *= 0.9
+            
+            # Clamp position size to reasonable values
+            position_size = max(0.1, min(1.5, position_size))
+            
+            logger.debug(f"Dynamic position size: {position_size:.2f} (volatility: {volatility_factor:.2f}, " +
+                         f"market condition: {market_condition}, condition factor: {condition_factor:.2f})")
+            
+            return position_size
+            
+        except Exception as e:
+            logger.error(f"Error calculating dynamic position size: {e}")
+            return base_position  # Return base position on error
     
     def calculate_dynamic_grid_levels(self, df):
         """
