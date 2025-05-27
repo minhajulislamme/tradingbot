@@ -29,11 +29,9 @@ TRADING_SYMBOL = os.getenv('TRADING_SYMBOL', 'RAYSOLUSDT')
 TRADING_TYPE = 'FUTURES'  # Use futures trading
 LEVERAGE = int(os.getenv('LEVERAGE', '10'))
 MARGIN_TYPE = os.getenv('MARGIN_TYPE', 'ISOLATED')  # ISOLATED or CROSSED
-STRATEGY = os.getenv('STRATEGY', 'RaysolDynamicGridStrategy')
+STRATEGY = os.getenv('STRATEGY', 'RaysolDynamicStrategy')
 
 # RAYSOL-specific strategy settings
-RAYSOL_GRID_LEVELS = int(os.getenv('RAYSOL_GRID_LEVELS', '5'))
-RAYSOL_GRID_SPACING_PCT = float(os.getenv('RAYSOL_GRID_SPACING_PCT', '1.2'))
 RAYSOL_TREND_EMA_FAST = int(os.getenv('RAYSOL_TREND_EMA_FAST', '8'))
 RAYSOL_TREND_EMA_SLOW = int(os.getenv('RAYSOL_TREND_EMA_SLOW', '21'))
 RAYSOL_VOLATILITY_LOOKBACK = int(os.getenv('RAYSOL_VOLATILITY_LOOKBACK', '20'))
@@ -41,8 +39,6 @@ RAYSOL_VOLUME_MA_PERIOD = int(os.getenv('RAYSOL_VOLUME_MA_PERIOD', '20'))
 # RAYSOL-specific advanced parameters
 RAYSOL_VOLATILITY_MULTIPLIER = float(os.getenv('RAYSOL_VOLATILITY_MULTIPLIER', '1.1'))
 RAYSOL_TREND_CONDITION_MULTIPLIER = float(os.getenv('RAYSOL_TREND_CONDITION_MULTIPLIER', '1.3'))
-RAYSOL_MIN_GRID_SPACING = float(os.getenv('RAYSOL_MIN_GRID_SPACING', '0.6'))
-RAYSOL_MAX_GRID_SPACING = float(os.getenv('RAYSOL_MAX_GRID_SPACING', '3.5'))
 
 # No other cryptocurrency settings - RAYSOL only
 

@@ -553,10 +553,9 @@ class TradingStrategy:
         Signal Priority Order:
         1. V-shaped reversal signals (highest priority - extreme conditions)
         2. Squeeze breakout signals (high priority - volatility breakouts)
-        3. Grid signals (medium-high priority - core strategy)
-        4. Multi-indicator signals (medium priority - confirmation-based)
-        5. Market condition specific signals (lower priority - trend following)
-        6. Extreme market signals (lowest priority - specialized conditions)
+        3. Multi-indicator signals (medium priority - confirmation-based)
+        4. Market condition specific signals (lower priority - trend following)
+        5. Extreme market signals (lowest priority - specialized conditions)
         
         Returns: 'BUY', 'SELL', or None
         """
@@ -608,31 +607,19 @@ class TradingStrategy:
                 })
                 logger.info(f"Squeeze breakout signal detected: {squeeze_signal}")
             
-            # === PRIORITY 3: Grid signals (Core strategy) ===
-            grid_signal = self.get_grid_signal(df)
-            if grid_signal:
-                signal_candidates.append({
-                    'signal': grid_signal,
-                    'priority': 3,
-                    'source': 'GRID',
-                    'confidence': 0.75,
-                    'description': f'Grid level triggered at {current_price:.6f}'
-                })
-                logger.debug(f"Grid signal detected: {grid_signal}")
-            
-            # === PRIORITY 4: Multi-indicator confirmation signals ===
+            # === PRIORITY 3: Multi-indicator confirmation signals ===
             multi_indicator_signal = self.get_multi_indicator_signal(df)
             if multi_indicator_signal:
                 signal_candidates.append({
                     'signal': multi_indicator_signal,
-                    'priority': 4,
+                    'priority': 3,
                     'source': 'MULTI_INDICATOR',
                     'confidence': 0.8,
                     'description': f'Multi-indicator confirmation with strong consensus'
                 })
                 logger.info(f"Multi-indicator signal detected: {multi_indicator_signal}")
             
-            # === PRIORITY 5: Market condition specific signals ===
+            # === PRIORITY 4: Market condition specific signals ===
             condition_signal = None
             if market_condition == 'SIDEWAYS':
                 condition_signal = self.get_sideways_signal(df)
@@ -647,19 +634,19 @@ class TradingStrategy:
             if condition_signal:
                 signal_candidates.append({
                     'signal': condition_signal,
-                    'priority': 5,
+                    'priority': 4,
                     'source': source,
                     'confidence': 0.7,
                     'description': f'{market_condition} market condition signal'
                 })
                 logger.debug(f"Market condition signal detected: {condition_signal} from {source}")
             
-            # === PRIORITY 6: Extreme market signals (Specialized conditions) ===
+            # === PRIORITY 5: Extreme market signals (Specialized conditions) ===
             extreme_signal = self.get_extreme_market_signal(df)
             if extreme_signal:
                 signal_candidates.append({
                     'signal': extreme_signal,
-                    'priority': 6,
+                    'priority': 5,
                     'source': 'EXTREME_MARKET',
                     'confidence': 0.65,
                     'description': f'Extreme market condition signal in {market_condition}'
@@ -810,16 +797,13 @@ class TradingStrategy:
             # Return the first signal as fallback
             return signal_candidates[0] if signal_candidates else None
 
-class RaysolDynamicGridStrategy(TradingStrategy):
+class RaysolDynamicStrategy(TradingStrategy):
     """
-    Enhanced Dynamic RAYSOL Grid Trading Strategy that adapts to market trends
+    Enhanced Dynamic RAYSOL Trading Strategy that adapts to market trends
     and different market conditions (bullish, bearish, and sideways).
     
     Features:
     - Dynamic position sizing based on volatility and account equity
-    - Adaptive grid spacing based on market volatility
-    - Asymmetric grids biased toward the trend direction
-    - Automatic grid reset when price moves outside range
     - Cool-off period after consecutive losses
     - Supertrend indicator for faster trend detection
     - VWAP for sideways markets
@@ -830,8 +814,6 @@ class RaysolDynamicGridStrategy(TradingStrategy):
     - Sophisticated reversal detection
     """
     def __init__(self, 
-                 grid_levels=5, 
-                 grid_spacing_pct=1.2,
                  trend_ema_fast=8,
                  trend_ema_slow=21,
                  volatility_lookback=20,
@@ -842,11 +824,9 @@ class RaysolDynamicGridStrategy(TradingStrategy):
                  adx_period=14,
                  adx_threshold=25,
                  sideways_threshold=15,
-                 # RAYSOL-specific parameters - updated grid spacing for better performance
+                 # RAYSOL-specific parameters
                  volatility_multiplier=1.1,
                  trend_condition_multiplier=1.3,
-                 min_grid_spacing=0.8,  # Increased from 0.6 to 0.8 for wider spacing
-                 max_grid_spacing=2.5,  # Reduced from 3.5 to 2.5 for tighter control
                  # New parameters for enhanced features
                  supertrend_period=10,
                  supertrend_multiplier=3.0,
@@ -855,11 +835,9 @@ class RaysolDynamicGridStrategy(TradingStrategy):
                  cooloff_period=3,
                  max_consecutive_losses=2):
         
-        super().__init__('RaysolDynamicGridStrategy')
+        super().__init__('RaysolDynamicStrategy')
         
         # Base parameters
-        self.grid_levels = grid_levels
-        self.grid_spacing_pct = grid_spacing_pct
         self.trend_ema_fast = trend_ema_fast
         self.trend_ema_slow = trend_ema_slow
         self.volatility_lookback = volatility_lookback
@@ -874,8 +852,6 @@ class RaysolDynamicGridStrategy(TradingStrategy):
         # RAYSOL-specific parameters
         self.volatility_multiplier = volatility_multiplier
         self.trend_condition_multiplier = trend_condition_multiplier
-        self.min_grid_spacing = min_grid_spacing
-        self.max_grid_spacing = max_grid_spacing
         
         # Enhanced feature parameters
         self.supertrend_period = supertrend_period
@@ -902,10 +878,8 @@ class RaysolDynamicGridStrategy(TradingStrategy):
         self.fib_resistance_levels = []
         
         # State variables
-        self.grids = None
         self.current_trend = None
         self.current_market_condition = None
-        self.last_grid_update = None
         self.position_size_pct = 1.0  # Default position size percentage
         
         # Market phase tracking
@@ -925,7 +899,7 @@ class RaysolDynamicGridStrategy(TradingStrategy):
         self._last_kline_time = None
         self._cached_dataframe = None
         
-        logger.info("Enhanced RAYSOL Dynamic Grid Strategy initialized with advanced ML features")
+        logger.info("Enhanced RAYSOL Dynamic Strategy initialized with advanced features")
         
     def prepare_data(self, klines):
         """
@@ -1078,7 +1052,7 @@ class RaysolDynamicGridStrategy(TradingStrategy):
         self.current_phase = phase
         self.phase_confidence = confidence
         
-        # Position scoring for grid optimization
+        # Position scoring for signal prioritization
         df['position_score'] = self.calculate_position_score(df)
         
         return df
@@ -1459,220 +1433,7 @@ class RaysolDynamicGridStrategy(TradingStrategy):
         except Exception as e:
             logger.error(f"Error calculating dynamic position size: {e}")
             return base_position  # Return base position on error
-    
-    def calculate_dynamic_grid_levels(self, df):
-        """
-        Adjust grid levels count based on volatility
-        """
-        latest = df.iloc[-1]
-        
-        # Base decision on ATR percentage and BB width
-        atr_pct = latest['atr_pct']
-        bb_width = latest['bb_width']
-        
-        # Fewer levels in high volatility
-        if atr_pct > 3.0 or bb_width > 0.08:
-            return max(3, self.grid_levels - 2)
-        # More levels in low volatility
-        elif atr_pct < 1.0 or bb_width < 0.03:
-            return min(7, self.grid_levels + 2)
-        # Default to configured level
-        else:
-            return self.grid_levels
             
-    def calculate_grid_spacing(self, df):
-        """
-        Enhanced dynamic grid spacing calculation based on multiple factors
-        """
-        try:
-            # Get the latest row
-            latest = df.iloc[-1]
-            
-            # Base grid spacing on ATR percentage
-            base_spacing = latest['atr_pct'] * self.volatility_multiplier
-            
-            # Adjust based on Bollinger Band width (volatility scaling)
-            bb_multiplier = min(max(latest['bb_width'] * 6, 0.5), 3.5)
-            
-            # Adjust based on market condition
-            market_condition = latest['market_condition']
-            if market_condition == 'SIDEWAYS':
-                # Tighter grid spacing in sideways markets
-                condition_multiplier = 0.8
-            elif market_condition in ['BULLISH', 'BEARISH']:
-                # Wider grid spacing in trending markets
-                condition_multiplier = self.trend_condition_multiplier
-            elif market_condition in ['EXTREME_BULLISH', 'EXTREME_BEARISH']:
-                # Even wider spacing in extreme trends
-                condition_multiplier = self.trend_condition_multiplier * 1.5
-            elif market_condition == 'SQUEEZE':
-                # Prepare for potential breakout with wider spacing
-                condition_multiplier = self.trend_condition_multiplier * 1.2
-            else:
-                condition_multiplier = 1.0
-            
-            # Calculate final grid spacing
-            dynamic_spacing = base_spacing * bb_multiplier * condition_multiplier
-            
-            # Ensure minimum and maximum spacing
-            return min(max(dynamic_spacing, self.min_grid_spacing), self.max_grid_spacing)
-            
-        except Exception as e:
-            logger.error(f"Error calculating grid spacing: {e}")
-            # Return default spacing in case of error
-            return self.grid_spacing_pct
-    
-    def calculate_grid_bias(self, df):
-        """
-        Calculate asymmetric grid bias based on market conditions
-        Returns percentage of grid levels that should be above current price
-        """
-        latest = df.iloc[-1]
-        market_condition = latest['market_condition']
-        
-        # Extreme bias in extreme market conditions
-        if market_condition == 'EXTREME_BULLISH':
-            return 0.8  # 80% of levels above (strong buy bias)
-        elif market_condition == 'EXTREME_BEARISH':
-            return 0.2  # 20% of levels above (strong sell bias)
-        # Strong bias in trending markets
-        elif market_condition == 'BULLISH':
-            return 0.7  # 70% of levels above
-        elif market_condition == 'BEARISH':
-            return 0.3  # 30% of levels above
-        # Neutral bias in sideways or squeeze markets
-        else:
-            return 0.5  # 50% of levels above/below (neutral)
-    
-    def generate_grids(self, df):
-        """
-        Generate enhanced dynamic grid levels with asymmetric distribution
-        and Fibonacci integration
-        """
-        # Get latest price and indicators
-        latest = df.iloc[-1]
-        current_price = latest['close']
-        current_trend = latest['trend']
-        market_condition = latest['market_condition']
-        
-        # Update risk manager with market condition if available
-        if self.risk_manager and market_condition:
-            self.risk_manager.set_market_condition(market_condition)
-            self.risk_manager.update_position_sizing(self.calculate_dynamic_position_size(df))
-            logger.info(f"Updated risk manager with market condition: {market_condition}")
-        
-        # Determine asymmetric grid bias based on market condition
-        grid_bias = self.calculate_grid_bias(df)
-        
-        # Calculate dynamic grid spacing based on volatility
-        dynamic_spacing = self.calculate_grid_spacing(df)
-        
-        # Adjust grid levels based on volatility
-        dynamic_grid_levels = self.calculate_dynamic_grid_levels(df)
-        
-        # Generate grid levels
-        grid_levels = []
-        
-        # Calculate number of levels above and below current price
-        levels_above = int(dynamic_grid_levels * grid_bias)
-        levels_below = dynamic_grid_levels - levels_above
-        
-        # Generate grid levels below current price
-        for i in range(1, levels_below + 1):
-            # Base grid price
-            base_grid_price = current_price * (1 - (dynamic_spacing / 100) * i)
-            
-            # Check if any Fibonacci support level is nearby
-            grid_price = base_grid_price
-            for support_level in self.fib_support_levels:
-                # If within 1% of a Fibonacci level, snap to it
-                if abs(support_level - base_grid_price) / base_grid_price < 0.01:
-                    grid_price = support_level
-                    break
-            
-            # Grid levels below current price are buy levels
-            grid_levels.append({
-                'price': grid_price,
-                'type': 'BUY',
-                'status': 'ACTIVE',
-                'created_at': latest['open_time']
-            })
-        
-        # Generate grid levels above current price
-        for i in range(1, levels_above + 1):
-            # Base grid price
-            base_grid_price = current_price * (1 + (dynamic_spacing / 100) * i)
-            
-            # Check if any Fibonacci resistance level is nearby
-            grid_price = base_grid_price
-            for resistance_level in self.fib_resistance_levels:
-                # If within 1% of a Fibonacci level, snap to it
-                if abs(resistance_level - base_grid_price) / base_grid_price < 0.01:
-                    grid_price = resistance_level
-                    break
-            
-            # Grid levels above current price are sell levels
-            grid_levels.append({
-                'price': grid_price,
-                'type': 'SELL',
-                'status': 'ACTIVE',
-                'created_at': latest['open_time']
-            })
-        
-        # Sort grid levels by price
-        grid_levels.sort(key=lambda x: x['price'])
-        
-        return grid_levels
-    
-    def should_update_grids(self, df):
-        """Enhanced grid reset logic"""
-        if self.grids is None or len(self.grids) == 0:
-            return True
-            
-        latest = df.iloc[-1]
-        current_trend = latest['trend']
-        current_market_condition = latest['market_condition']
-        
-        # Update risk manager with new market condition if it changed
-        if self.risk_manager and self.current_market_condition != current_market_condition:
-            self.risk_manager.set_market_condition(current_market_condition)
-            logger.info(f"Updated risk manager with market condition: {current_market_condition}")
-        
-        # Update grids if trend or market condition changed significantly
-        trend_change = (self.current_trend != current_trend)
-        condition_change = (
-            (self.current_market_condition in ['BULLISH', 'BEARISH'] and 
-             current_market_condition in ['EXTREME_BULLISH', 'EXTREME_BEARISH', 'SQUEEZE']) or
-            (self.current_market_condition in ['EXTREME_BULLISH', 'EXTREME_BEARISH'] and 
-             current_market_condition in ['BULLISH', 'BEARISH', 'SQUEEZE']) or
-            (self.current_market_condition == 'SQUEEZE' and 
-             current_market_condition in ['BULLISH', 'BEARISH', 'EXTREME_BULLISH', 'EXTREME_BEARISH'])
-        )
-        
-        if trend_change or condition_change:
-            logger.info(f"Market conditions changed. Trend: {self.current_trend}->{current_trend}, "
-                       f"Condition: {self.current_market_condition}->{current_market_condition}. "
-                       f"Updating grids.")
-            return True
-            
-        # Check if price moved significantly outside grid range (auto-reset)
-        current_price = latest['close']
-        min_grid = min(grid['price'] for grid in self.grids)
-        max_grid = max(grid['price'] for grid in self.grids)
-        
-        # If price is outside grid range by more than 2%, update grids
-        if current_price < min_grid * 0.98 or current_price > max_grid * 1.02:
-            logger.info(f"Price moved outside grid range. Updating grids.")
-            return True
-            
-        # Check if many grid levels have been triggered
-        active_grids = [grid for grid in self.grids if grid['status'] == 'ACTIVE']
-        if len(active_grids) < len(self.grids) * 0.3:  # Less than 30% active
-            logger.info(f"Too many grid levels have been triggered. Refreshing grid.")
-            return True
-            
-        return False
-    
     def in_cooloff_period(self, current_time):
         """Check if we're in a cool-off period after losses"""
         if self.consecutive_losses >= self.max_consecutive_losses and self.last_loss_time:
@@ -1954,83 +1715,11 @@ class RaysolDynamicGridStrategy(TradingStrategy):
             
         return None
     
-    def get_grid_signal(self, df):
-        """Enhanced grid signal with position sizing"""
-        latest = df.iloc[-1]
-        current_price = latest['close']
-        current_time = latest['open_time']
-        
-        # Check for cool-off period after consecutive losses
-        if self.in_cooloff_period(current_time):
-            logger.info(f"In cool-off period after {self.consecutive_losses} consecutive losses. No grid signals.")
-            return None
-        
-        # If no grids, generate them first
-        if self.grids is None or len(self.grids) == 0 or self.should_update_grids(df):
-            try:
-                self.grids = self.generate_grids(df)
-                self.current_trend = latest['trend']
-                self.current_market_condition = latest['market_condition']
-                self.last_grid_update = latest['open_time']
-                logger.info(f"Generated new grids for {self.current_market_condition} market condition")
-            except Exception as e:
-                logger.error(f"Error generating grids: {e}")
-                # Return None in case of grid generation error
-                return None
-            return None  # No signal on grid initialization
-        
-        # Find the nearest grid levels
-        buy_grids = [grid for grid in self.grids if grid['type'] == 'BUY' and grid['status'] == 'ACTIVE']
-        sell_grids = [grid for grid in self.grids if grid['type'] == 'SELL' and grid['status'] == 'ACTIVE']
-        
-        # Find closest buy and sell grids
-        closest_buy = None
-        closest_sell = None
-        
-        if buy_grids:
-            closest_buy = max(buy_grids, key=lambda x: x['price'])
-            
-        if sell_grids:
-            closest_sell = min(sell_grids, key=lambda x: x['price'])
-        
-        # Determine signal based on price position relative to grids
-        if closest_buy and current_price <= closest_buy['price'] * 1.001:
-            # Mark this grid as triggered
-            for grid in self.grids:
-                if grid['price'] == closest_buy['price']:
-                    grid['status'] = 'TRIGGERED'
-                    
-            # Update position size for risk manager
-            if self.risk_manager:
-                position_size = self.calculate_dynamic_position_size(df)
-                self.risk_manager.update_position_sizing(position_size)
-                self.position_size_pct = position_size
-            
-            # Return BUY signal
-            return 'BUY'
-            
-        elif closest_sell and current_price >= closest_sell['price'] * 0.999:
-            # Mark this grid as triggered
-            for grid in self.grids:
-                if grid['price'] == closest_sell['price']:
-                    grid['status'] = 'TRIGGERED'
-                    
-            # Update position size for risk manager
-            if self.risk_manager:
-                position_size = self.calculate_dynamic_position_size(df)
-                self.risk_manager.update_position_sizing(position_size)
-                self.position_size_pct = position_size
-            
-            # Return SELL signal
-            return 'SELL'
-            
-        return None
-    
     def get_sideways_signal(self, df):
         """Enhanced sideways market signal with VWAP integration"""
         latest = df.iloc[-1]
         
-        # In sideways markets, use VWAP as a dynamic grid anchor
+        # In sideways markets, use VWAP as a dynamic anchor point
         
         # Buy near lower Bollinger Band with VWAP confirmation
         if latest['close'] < latest['bb_lower'] * 1.01 and latest['close'] < latest['vwap']:
@@ -2193,7 +1882,6 @@ class RaysolDynamicGridStrategy(TradingStrategy):
         self._last_kline_time = None
         self.fib_support_levels = []
         self.fib_resistance_levels = []
-        self.grids = None
         logger.info("All strategy caches have been reset")
     
     def calculate_market_sentiment(self, df):
@@ -2358,7 +2046,7 @@ class RaysolDynamicGridStrategy(TradingStrategy):
             return 'UNKNOWN', 0.5
 
     def calculate_position_score(self, df):
-        """Calculate a comprehensive position score for grid prioritization"""
+        """Calculate a comprehensive position score for signal prioritization"""
         try:
             latest = df.iloc[-1]
             score = 0.0
@@ -2535,17 +2223,14 @@ def get_strategy(strategy_name):
     """Factory function to get a strategy by name"""
     from modules.config import (
         # RAYSOL parameters
-        RAYSOL_GRID_LEVELS, RAYSOL_GRID_SPACING_PCT, RAYSOL_TREND_EMA_FAST, RAYSOL_TREND_EMA_SLOW,
+        RAYSOL_TREND_EMA_FAST, RAYSOL_TREND_EMA_SLOW,
         RAYSOL_VOLATILITY_LOOKBACK, RSI_PERIOD, RSI_OVERBOUGHT, RSI_OVERSOLD,
         RAYSOL_VOLUME_MA_PERIOD, RAYSOL_ADX_PERIOD, RAYSOL_ADX_THRESHOLD, RAYSOL_SIDEWAYS_THRESHOLD,
-        RAYSOL_VOLATILITY_MULTIPLIER, RAYSOL_TREND_CONDITION_MULTIPLIER,
-        RAYSOL_MIN_GRID_SPACING, RAYSOL_MAX_GRID_SPACING
+        RAYSOL_VOLATILITY_MULTIPLIER, RAYSOL_TREND_CONDITION_MULTIPLIER
     )
     
     strategies = {
-        'RaysolDynamicGridStrategy': RaysolDynamicGridStrategy(
-            grid_levels=RAYSOL_GRID_LEVELS,
-            grid_spacing_pct=RAYSOL_GRID_SPACING_PCT,
+        'RaysolDynamicStrategy': RaysolDynamicStrategy(
             trend_ema_fast=RAYSOL_TREND_EMA_FAST,
             trend_ema_slow=RAYSOL_TREND_EMA_SLOW,
             volatility_lookback=RAYSOL_VOLATILITY_LOOKBACK,
@@ -2558,9 +2243,7 @@ def get_strategy(strategy_name):
             sideways_threshold=RAYSOL_SIDEWAYS_THRESHOLD,
             # Pass RAYSOL specific parameters
             volatility_multiplier=RAYSOL_VOLATILITY_MULTIPLIER,
-            trend_condition_multiplier=RAYSOL_TREND_CONDITION_MULTIPLIER,
-            min_grid_spacing=RAYSOL_MIN_GRID_SPACING,
-            max_grid_spacing=RAYSOL_MAX_GRID_SPACING
+            trend_condition_multiplier=RAYSOL_TREND_CONDITION_MULTIPLIER
         )
     }
     
@@ -2578,7 +2261,7 @@ def get_strategy_for_symbol(symbol, strategy_name=None):
         return get_strategy(strategy_name)
     
     # Default to RAYSOLUSDT strategy for any symbol
-    return RaysolDynamicGridStrategy()
+    return RaysolDynamicStrategy()
     
     # Default to base strategy if needed
     # return TradingStrategy(symbol)

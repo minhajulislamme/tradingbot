@@ -118,7 +118,7 @@ check my main .py than tell me now to excute trade like one positon buy close an
 
 python3 main.py --backtest --symbol AVAXUSDT --strategy AvaxDynamicGrid
 python3 main.py --backtest --symbol KAITOUSDT --strategy KaitoDynamicGridStrategy
-python3 main.py --backtest --symbol RAYSOLUSDT --strategy RaysolDynamicGridStrategy
+python3 main.py --backtest --symbol RAYSOLUSDT --strategy RaysolDynamicStrategy
 
 
 but i get notification but not place position
