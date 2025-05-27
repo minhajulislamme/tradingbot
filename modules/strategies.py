@@ -519,18 +519,6 @@ class TradingStrategy:
                     'data': df,
                     'time': current_time
                 }
-                logger.debug(f"Cached data for {cache_key}")# Manage cache size - remove oldest entry if needed
-                if len(self._cache) >= self._max_cache_entries:
-                    oldest_key = min(self._cache.keys(), 
-                                    key=lambda k: self._cache[k].get('time', 0))
-                    del self._cache[oldest_key]
-                    logger.debug(f"Cache full, removed oldest entry {oldest_key}")
-                
-                # Store in cache with timestamp
-                self._cache[cache_key] = {
-                    'data': df,
-                    'time': current_time
-                }
                 logger.debug(f"Cached data for {cache_key}")
             
             return df
@@ -568,6 +556,11 @@ class TradingStrategy:
             
             # Add all technical indicators
             df = self.add_indicators(df)
+            
+            # Validate critical data before signal generation
+            if not self._validate_critical_data(df):
+                logger.warning("Critical data validation failed - skipping signal generation")
+                return None
             
             # Get latest market data
             latest = df.iloc[-1]
@@ -916,14 +909,8 @@ class RaysolDynamicStrategy(TradingStrategy):
             current_time = int(datetime.now().timestamp())
             
             # Clean up expired cache entries periodically
-            if random.random() < 0.05:  # 5% chance to clean on each call
-                expired_keys = []
-                for k, v in list(self._cache.items()):  # Use list() to avoid modification during iteration
-                    if current_time - v.get('time', 0) > self._cache_expiry:
-                        expired_keys.append(k)
-                for k in expired_keys:
-                    del self._cache[k]
-                    logger.debug(f"Removed expired cache entry: {k}")
+            if random.random() < 0.1:  # 10% chance to clean on each call
+                self._cleanup_expired_cache(current_time)
             
             # Look for cache entry
             if cache_key in self._cache:
@@ -994,7 +981,7 @@ class RaysolDynamicStrategy(TradingStrategy):
         df['atr'] = ta.volatility.average_true_range(df['high'], df['low'], 
                                                     df['close'], 
                                                     window=self.volatility_lookback)
-        df['atr_pct'] = df['atr'] / df['close'] * 100
+        df['atr_pct'] = (df['atr'] / df['close'].where(df['close'] > 0, 1)) * 100  # Avoid division by zero
         
         # ADX for trend strength
         adx_indicator = ta.trend.ADXIndicator(df['high'], df['low'], df['close'], 
@@ -1010,7 +997,7 @@ class RaysolDynamicStrategy(TradingStrategy):
         df['bb_upper'] = indicator_bb.bollinger_hband()
         df['bb_middle'] = indicator_bb.bollinger_mavg()
         df['bb_lower'] = indicator_bb.bollinger_lband()
-        df['bb_width'] = (df['bb_upper'] - df['bb_lower']) / df['bb_middle']
+        df['bb_width'] = (df['bb_upper'] - df['bb_lower']) / df['bb_middle'].where(df['bb_middle'] > 0, 1)  # Avoid division by zero
         
         # Bollinger Band Squeeze detection
         df['bb_squeeze'] = df['bb_width'] < self.squeeze_threshold
@@ -1055,7 +1042,117 @@ class RaysolDynamicStrategy(TradingStrategy):
         # Position scoring for signal prioritization
         df['position_score'] = self.calculate_position_score(df)
         
+        # Handle NaN values for robust trading
+        df = self._handle_nan_values(df)
+        
         return df
+    
+    def _handle_nan_values(self, df):
+        """Handle NaN values in technical indicators for robust trading"""
+        try:
+            # Critical indicators that must not be NaN for signal generation
+            critical_indicators = [
+                'rsi', 'supertrend_direction', 'adx', 'close', 'volume',
+                'atr', 'ema_fast', 'ema_slow', 'volume_ratio'
+            ]
+            
+            # Handle NaN values with appropriate fallbacks
+            for indicator in critical_indicators:
+                if indicator in df.columns:
+                    if indicator == 'rsi':
+                        df[indicator] = df[indicator].fillna(50)  # Neutral RSI
+                    elif indicator == 'supertrend_direction':
+                        df[indicator] = df[indicator].fillna(1)  # Default bullish
+                    elif indicator == 'adx':
+                        df[indicator] = df[indicator].fillna(self.adx_threshold - 1)  # Below threshold
+                    elif indicator == 'volume_ratio':
+                        df[indicator] = df[indicator].fillna(1.0)  # Normal volume
+                    elif indicator in ['atr', 'ema_fast', 'ema_slow']:
+                        # Forward fill then backward fill for price-based indicators
+                        df[indicator] = df[indicator].fillna(method='ffill').fillna(method='bfill')
+                    else:
+                        # For other indicators, use forward fill
+                        df[indicator] = df[indicator].fillna(method='ffill')
+            
+            # Handle optional indicators with safe defaults
+            optional_indicators = {
+                'bb_upper': df['close'] * 1.02,  # 2% above close
+                'bb_lower': df['close'] * 0.98,  # 2% below close  
+                'bb_middle': df['close'],        # Current close
+                'bb_width': 0.04,               # 4% width
+                'macd': 0,                      # Neutral MACD
+                'macd_signal': 0,               # Neutral signal
+                'macd_diff': 0,                 # No difference
+                'vwap': df['close'],            # Use close as VWAP fallback
+                'volume_weighted_rsi': df['rsi'] if 'rsi' in df.columns else 50,
+                'market_condition': 'SIDEWAYS', # Default market condition
+                'potential_reversal': 0,        # No reversal
+                'position_score': 0.5          # Neutral score
+            }
+            
+            for indicator, fallback in optional_indicators.items():
+                if indicator in df.columns:
+                    if isinstance(fallback, (int, float)):
+                        df[indicator] = df[indicator].fillna(fallback)
+                    else:
+                        # For Series fallbacks
+                        df[indicator] = df[indicator].fillna(fallback)
+            
+            # Ensure no infinite values
+            df = df.replace([np.inf, -np.inf], np.nan)
+            
+            # Final check - if any critical indicators still have NaN, log warning
+            for indicator in critical_indicators:
+                if indicator in df.columns and df[indicator].isna().any():
+                    logger.warning(f"Critical indicator {indicator} still contains NaN values after cleaning")
+                    
+            return df
+            
+        except Exception as e:
+            logger.error(f"Error handling NaN values: {e}")
+            return df  # Return original dataframe if cleaning fails
+    
+    def _validate_critical_data(self, df):
+        """Validate that critical data is available and valid for signal generation"""
+        try:
+            if df.empty or len(df) == 0:
+                return False
+                
+            latest = df.iloc[-1]
+            
+            # Check for critical price data
+            required_price_columns = ['open', 'high', 'low', 'close', 'volume']
+            for col in required_price_columns:
+                if col not in df.columns or pd.isna(latest[col]) or latest[col] <= 0:
+                    logger.warning(f"Invalid or missing price data for {col}: {latest.get(col, 'N/A')}")
+                    return False
+            
+            # Check for critical indicators
+            critical_indicators = ['rsi', 'supertrend_direction', 'adx']
+            for indicator in critical_indicators:
+                if indicator not in df.columns or pd.isna(latest[indicator]):
+                    logger.warning(f"Missing or invalid indicator data for {indicator}")
+                    return False
+            
+            # Validate reasonable price ranges (sanity check)
+            if latest['high'] < latest['low']:
+                logger.warning("Invalid price data: high < low")
+                return False
+                
+            if latest['close'] > latest['high'] or latest['close'] < latest['low']:
+                logger.warning("Invalid price data: close outside high-low range")
+                return False
+            
+            # Validate RSI is in valid range
+            if not (0 <= latest['rsi'] <= 100):
+                logger.warning(f"RSI out of valid range: {latest['rsi']}")
+                return False
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error validating critical data: {e}")
+            return False
     
     def calculate_vwap(self, df):
         """Calculate VWAP (Volume Weighted Average Price)"""
@@ -1422,8 +1519,13 @@ class RaysolDynamicStrategy(TradingStrategy):
                 elif trend_consistency < 0.3:
                     position_size *= 0.9
             
-            # Clamp position size to reasonable values
-            position_size = max(0.1, min(1.5, position_size))
+            # Clamp position size to reasonable values for real trading safety
+            position_size = max(0.05, min(1.0, position_size))  # 5% to 100% maximum
+            
+            # Additional safety check for real money trading
+            if position_size > 0.8:
+                logger.warning(f"Large position size calculated: {position_size:.2f}, capping at 0.8 for safety")
+                position_size = 0.8
             
             logger.debug(f"Dynamic position size: {position_size:.2f} (volatility: {volatility_factor:.2f}, " +
                          f"market condition: {market_condition}, condition factor: {condition_factor:.2f})")
@@ -1884,6 +1986,24 @@ class RaysolDynamicStrategy(TradingStrategy):
         self.fib_resistance_levels = []
         logger.info("All strategy caches have been reset")
     
+    def _cleanup_expired_cache(self, current_time):
+        """Clean up expired cache entries to prevent memory leaks"""
+        try:
+            expired_keys = []
+            for k, v in list(self._cache.items()):
+                cache_time = v.get('time', 0)
+                if current_time - cache_time > self._cache_expiry:
+                    expired_keys.append(k)
+            
+            for k in expired_keys:
+                del self._cache[k]
+                
+            if expired_keys:
+                logger.debug(f"Cleaned up {len(expired_keys)} expired cache entries")
+                
+        except Exception as e:
+            logger.error(f"Error cleaning up cache: {e}")
+    
     def calculate_market_sentiment(self, df):
         """Advanced market sentiment calculation with multiple indicators"""
         try:
@@ -2265,5 +2385,3 @@ def get_strategy_for_symbol(symbol, strategy_name=None):
     
     # Default to base strategy if needed
     # return TradingStrategy(symbol)
-
-# End of file
