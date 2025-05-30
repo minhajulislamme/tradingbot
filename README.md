@@ -1,20 +1,29 @@
-# Binance Trading Bot
+# 🚀 Binance Trading Bot
 
-A sophisticated automated trading bot for Binance Futures, featuring advanced technical analysis strategies, real-time data processing, and risk management capabilities.
+<div align="center">
+  
+![Version](https://img.shields.io/badge/version-1.0.0-blue.svg?style=flat-square)
+![License](https://img.shields.io/badge/license-MIT-green.svg?style=flat-square)
+![Python](https://img.shields.io/badge/python-3.8+-blue.svg?style=flat-square&logo=python&logoColor=white)
+![Binance](https://img.shields.io/badge/Binance-Futures-yellow.svg?style=flat-square&logo=binance&logoColor=white)
 
-## Features
+</div>
 
-- **Advanced Trading Strategies**: Dynamic Strategy with volatility-based position sizing and market condition detection
-- **Real-Time Data Processing**: Utilizes WebSockets for up-to-the-second market data
-- **Comprehensive Risk Management**: Dynamic position sizing, stop-loss, and take-profit management
-- **Performance Tracking**: Detailed logs, trade history, and performance reporting
-- **Backtesting Capabilities**: Test strategies on historical data before trading live
-- **Telegram Integration**: Real-time notifications and status updates
-- **Adaptive Market Analysis**: Detects and adapts to different market conditions
-- **Institutional Order Flow Analysis**: Identifies and acts on large market orders
-- **Auto-Compounding**: Automatically adjusts position sizes based on performance
+A sophisticated automated trading bot for Binance Futures, featuring advanced technical analysis strategies, real-time data processing, and risk management capabilities. Designed to provide a complete solution for algorithmic cryptocurrency trading.
 
-## Installation
+## ✨ Features
+
+- **🧠 Advanced Trading Strategies**: Dynamic Strategy with volatility-based position sizing and market condition detection
+- **⚡ Real-Time Data Processing**: Utilizes WebSockets for up-to-the-second market data
+- **🛡️ Comprehensive Risk Management**: Dynamic position sizing, stop-loss, and take-profit management
+- **📊 Performance Tracking**: Detailed logs, trade history, and performance reporting
+- **🔍 Backtesting Capabilities**: Test strategies on historical data before trading live
+- **📱 Telegram Integration**: Real-time notifications and status updates
+- **📈 Adaptive Market Analysis**: Detects and adapts to different market conditions
+- **🔎 Institutional Order Flow Analysis**: Identifies and acts on large market orders
+- **💰 Auto-Compounding**: Automatically adjusts position sizes based on performance
+
+## 🛠️ Installation
 
 1. Clone the repository:
 
@@ -36,16 +45,20 @@ A sophisticated automated trading bot for Binance Futures, featuring advanced te
    BINANCE_API_SECRET=your_api_secret
    ```
 
-## Configuration
+## ⚙️ Configuration
 
 Edit the `.env` file to customize trading parameters:
 
-- `TRADING_SYMBOL`: The cryptocurrency pair to trade (e.g., BTCUSDT, ETHUSDT)
-- `STRATEGY`: Trading strategy to use (default: RaysolDynamicStrategy)
-- `TIMEFRAME`: Trading timeframe (e.g., 15m, 1h)
-- Strategy-specific parameters (risk levels, indicator settings, etc.)
+| Parameter        | Description                      | Example Values            |
+| ---------------- | -------------------------------- | ------------------------- |
+| `TRADING_SYMBOL` | The cryptocurrency pair to trade | BTCUSDT, ETHUSDT, SUIUSDT |
+| `STRATEGY`       | Trading strategy to use          | RaysolDynamicStrategy     |
+| `TIMEFRAME`      | Trading timeframe                | 15m, 1h, 4h               |
+| `RSI_PERIOD`     | RSI indicator period             | 14                        |
+| `LEVERAGE`       | Trading leverage                 | 1, 5, 10                  |
+| `USE_TELEGRAM`   | Enable Telegram notifications    | True, False               |
 
-## Usage
+## 🚀 Usage
 
 ### Start the Trading Bot
 
@@ -77,14 +90,37 @@ python main.py --backtest --symbol BTCUSDT --timeframe 15m --start-date "2023-01
 python main.py --report
 ```
 
-## System Requirements
+## 🖥️ Command Line Arguments
+
+| Argument                | Description                                  |
+| ----------------------- | -------------------------------------------- |
+| `--backtest`            | Run in backtest mode only                    |
+| `--symbol SYMBOL`       | Trading symbol (default: from config)        |
+| `--timeframe TIMEFRAME` | Timeframe for trading (default: from config) |
+| `--strategy STRATEGY`   | Strategy to use (default: from config)       |
+| `--start-date DATE`     | Start date for backtest (YYYY-MM-DD)         |
+| `--end-date DATE`       | End date for backtest (YYYY-MM-DD)           |
+| `--report`              | Generate performance report only             |
+| `--small-account`       | Run with small account mode                  |
+| `--skip-validation`     | Skip strategy validation                     |
+
+## 💻 System Requirements
 
 - Python 3.8+
 - Linux/macOS/Windows
 - Internet connection
 - Binance account with API access
 
-## Dependencies
+## 📦 Dependencies
+
+<div align="center">
+  
+![python-binance](https://img.shields.io/badge/python--binance-1.0.28-blue.svg?style=flat-square)
+![pandas](https://img.shields.io/badge/pandas-1.3.0+-green.svg?style=flat-square)
+![numpy](https://img.shields.io/badge/numpy-1.20.0+-orange.svg?style=flat-square)
+![ta](https://img.shields.io/badge/ta-0.10.0+-yellow.svg?style=flat-square)
+  
+</div>
 
 - python-binance
 - numpy
@@ -98,23 +134,66 @@ python main.py --report
 - requests
 - tqdm
 
-## Directory Structure
+## 📁 Directory Structure
 
-- `main.py`: Main bot executable
-- `modules/`: Core components (strategies, risk manager, Binance client)
-- `state/`: Persists bot state between restarts
-- `logs/`: Trading logs
-- `reports/`: Performance reports
-- `backtest_results/`: Backtest output files
+```
+tradingbot/
+├── main.py                 # Main bot executable
+├── setup.sh                # Setup script
+├── run_bot.sh              # Bot startup script
+├── stop_bot_manual.sh      # Bot shutdown script
+├── check_bot_status.sh     # Status checking script
+├── requirements.txt        # Python dependencies
+├── modules/                # Core components
+│   ├── binance_client.py   # Binance API interface
+│   ├── strategies.py       # Trading strategies
+│   ├── risk_manager.py     # Risk management
+│   ├── websocket_handler.py # Real-time data handling
+│   ├── config.py           # Configuration
+│   └── backtest.py         # Backtesting engine
+├── state/                  # Persists bot state
+├── logs/                   # Trading logs
+├── reports/                # Performance reports
+└── backtest_results/       # Backtest output files
+```
 
-## Disclaimer
+## ⚠️ Disclaimer
 
 This trading bot is for educational and research purposes only. Use at your own risk. Cryptocurrency trading involves substantial risk of loss and is not suitable for every investor. The developer is not responsible for any financial losses incurred while using this software.
 
-## License
+## 📊 Performance Visualization
+
+The bot generates detailed performance reports and visualizations after backtesting:
+
+```
+backtest_results/
+└── SUIUSDT_RaysolDynamicStrategy_20250530_230844/
+    ├── equity.csv
+    ├── results.json
+    ├── summary.md
+    ├── trades.csv
+    └── plots/
+        ├── drawdown.png
+        ├── equity_curve.png
+        └── monthly_returns.png
+```
+
+## 📜 License
 
 MIT License
 
-## Contributing
+## 👨‍💻 Author
+
+Developed by **Minhajul Islam**
+
+<div align="center">
+  
+[![GitHub](https://img.shields.io/badge/GitHub-minhajul-181717?style=for-the-badge&logo=github&logoColor=white)](https://github.com/minhajul)
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-minhajulislam-0077B5?style=for-the-badge&logo=linkedin&logoColor=white)](https://linkedin.com/in/minhajulislam)
+[![Twitter](https://img.shields.io/badge/Twitter-@minhajul-1DA1F2?style=for-the-badge&logo=twitter&logoColor=white)](https://twitter.com/minhajul)
+  
+</div>
+
+## 🤝 Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.

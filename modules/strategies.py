@@ -2017,8 +2017,8 @@ class RaysolDynamicStrategy(TradingStrategy):
         
         # Adjust signal thresholds based on market condition - higher thresholds to reduce false signals
         market_condition = latest['market_condition']
-        bull_threshold = 7.0  # Increased from 7.0 to reduce false signals
-        bear_threshold = 7.0  # Increased from 7.0 to reduce false signals
+        bull_threshold = 8.0  # Increased from 7.0 to reduce false signals
+        bear_threshold = 8.0  # Increased from 7.0 to reduce false signals
         
         # Volume requirement - ensure we have enough volume to validate signals
         min_volume_ratio = 1.2  # Minimum volume needed relative to average
