@@ -2,7 +2,7 @@
 
 <div align="center">
   
-![Version](https://img.shields.io/badge/version-1.0.0-blue.svg?style=flat-square)
+![Version](https://img.shields.io/badge/version-0.1.0-blue.svg?style=flat-square)
 ![License](https://img.shields.io/badge/license-MIT-green.svg?style=flat-square)
 ![Python](https://img.shields.io/badge/python-3.8+-blue.svg?style=flat-square&logo=python&logoColor=white)
 ![Binance](https://img.shields.io/badge/Binance-Futures-yellow.svg?style=flat-square&logo=binance&logoColor=white)
@@ -188,9 +188,8 @@ Developed by **Minhajul Islam**
 
 <div align="center">
   
-[![GitHub](https://img.shields.io/badge/GitHub-minhajul-181717?style=for-the-badge&logo=github&logoColor=white)](https://github.com/minhajul)
-[![LinkedIn](https://img.shields.io/badge/LinkedIn-minhajulislam-0077B5?style=for-the-badge&logo=linkedin&logoColor=white)](https://linkedin.com/in/minhajulislam)
-[![Twitter](https://img.shields.io/badge/Twitter-@minhajul-1DA1F2?style=for-the-badge&logo=twitter&logoColor=white)](https://twitter.com/minhajul)
+[![GitHub](https://img.shields.io/badge/GitHub-minhajulislamme-181717?style=for-the-badge&logo=github&logoColor=white)](https://github.com/minhajulislamme)
+
   
 </div>
 
