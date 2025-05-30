@@ -1,18 +1,20 @@
-import logging
-import numpy as np
-import pandas as pd
-import ta
-import math
-import time
-import warnings
 from datetime import datetime, timedelta
-import random
 from typing import Dict, List, Tuple, Optional, Any
 # Enhanced ML imports with fallbacks
 try:
     from sklearn.cluster import KMeans
     from sklearn.preprocessing import StandardScaler
     from sklearn.ensemble import IsolationForest
+    import numpy as np
+    import pandas as pd
+    import ta
+    import ta.momentum
+    import ta.trend
+    import ta.volatility
+    import logging
+    import warnings
+    import time
+    import random
     SKLEARN_AVAILABLE = True
 except ImportError:
     # Fallback classes for when sklearn is not available
@@ -35,10 +37,196 @@ except ImportError:
             return [1] * len(X)
     
     SKLEARN_AVAILABLE = False
-import warnings
 warnings.filterwarnings('ignore')
 
 logger = logging.getLogger(__name__)
+
+class OrderFlowAnalyzer:
+    """Analyzes order flow imbalance to detect institutional activity"""
+    
+    def __init__(self):
+        self.lookback_period = 14
+        self.volume_threshold = 1.5  # Threshold for large volume bars
+        self.imbalance_threshold = 0.65  # Threshold for significant order imbalance
+        
+    def calculate_order_flow_imbalance(self, df):
+        """
+        Calculate Order Flow Imbalance (OFI) to detect institutional vs retail activity
+        
+        Returns DataFrame with added OFI metrics
+        """
+        if len(df) < self.lookback_period:
+            logger.warning(f"Not enough data for order flow analysis: {len(df)} < {self.lookback_period}")
+            return df
+            
+        # Make a copy to avoid modifying the original
+        result_df = df.copy()
+        
+        # Calculate buying and selling volume
+        result_df['bar_range'] = result_df['high'] - result_df['low']
+        result_df['price_move'] = result_df['close'] - result_df['open']
+        
+        # Calculate buying and selling volume
+        result_df['buy_volume'] = np.where(
+            result_df['close'] >= result_df['open'],
+            result_df['volume'],
+            result_df['volume'] * (result_df['close'] - result_df['low']) / result_df['bar_range']
+        )
+        result_df['sell_volume'] = np.where(
+            result_df['close'] < result_df['open'],
+            result_df['volume'],
+            result_df['volume'] * (result_df['high'] - result_df['close']) / result_df['bar_range']
+        )
+        
+        # Fix potential NaN values when bar_range is 0
+        result_df['buy_volume'] = result_df['buy_volume'].fillna(0)
+        result_df['sell_volume'] = result_df['sell_volume'].fillna(0)
+        
+        # Calculate Delta (buy volume - sell volume)
+        result_df['delta'] = result_df['buy_volume'] - result_df['sell_volume']
+        
+        # Calculate Cumulative Delta for trend identification
+        result_df['cumulative_delta'] = result_df['delta'].cumsum()
+        
+        # Calculate OFI (Order Flow Imbalance)
+        result_df['ofi'] = result_df['delta'] / result_df['volume'].where(result_df['volume'] > 0, 1)
+        
+        # Calculate rolling average volume for baseline
+        result_df['avg_volume'] = result_df['volume'].rolling(window=self.lookback_period).mean()
+        
+        # Identify large volume bars (potential institutional activity)
+        result_df['large_volume'] = result_df['volume'] > (result_df['avg_volume'] * self.volume_threshold)
+        
+        # Identify strong imbalance bars
+        result_df['buy_imbalance'] = (result_df['ofi'] > self.imbalance_threshold) & result_df['large_volume']
+        result_df['sell_imbalance'] = (result_df['ofi'] < -self.imbalance_threshold) & result_df['large_volume']
+        
+        # Calculate institutional activity score (-100 to 100)
+        result_df['inst_score'] = np.where(
+            result_df['large_volume'],
+            result_df['ofi'] * 100,
+            result_df['ofi'] * 50  # Lower weight for normal volume
+        )
+        
+        # Identify accumulation/distribution
+        result_df['accumulation'] = self._detect_accumulation(result_df)
+        result_df['distribution'] = self._detect_distribution(result_df)
+        
+        # Calculate VWAP (Volume Weighted Average Price) for reference
+        result_df['vwap'] = self._calculate_vwap(result_df)
+        
+        # Divergence between price and delta (hidden institutional activity)
+        result_df['delta_divergence'] = self._calculate_delta_divergence(result_df)
+        
+        return result_df
+    
+    def _calculate_vwap(self, df):
+        """Calculate VWAP from OHLCV data"""
+        df['typical_price'] = (df['high'] + df['low'] + df['close']) / 3
+        df['price_volume'] = df['typical_price'] * df['volume']
+        df['cumulative_volume'] = df['volume'].cumsum()
+        df['cumulative_price_volume'] = df['price_volume'].cumsum()
+        vwap = df['cumulative_price_volume'] / df['cumulative_volume'].replace(to_replace=0, value=float('nan'))
+        return vwap
+    
+    def _detect_accumulation(self, df):
+        """
+        Detect institutional accumulation patterns
+        Returns 1 for accumulation, 0 for no accumulation
+        """
+        accumulation = np.zeros(len(df))
+        
+        # Need at least 5 bars to detect patterns
+        if len(df) < 5:
+            return accumulation
+        
+        for i in range(4, len(df)):
+            # Check for price going sideways or slightly down while delta is positive
+            price_change = (df['close'].iloc[i] - df['close'].iloc[i-4]) / df['close'].iloc[i-4]
+            delta_sum = df['delta'].iloc[i-4:i+1].sum()
+            
+            # Accumulation: Price not moving much, but positive buying pressure (delta)
+            if -0.02 <= price_change <= 0.005 and delta_sum > 0:
+                # Strong accumulation if price tries to drop but keeps recovering
+                price_trying_down = (min(df['low'].iloc[i-4:i+1]) < df['close'].iloc[i-4] * 0.99)
+                if price_trying_down and df['close'].iloc[i] >= df['close'].iloc[i-4] * 0.995:
+                    accumulation[i] = 1
+            
+            # Another accumulation pattern: Price making higher lows while delta is increasingly positive
+            elif i >= 10:
+                last_5_lows = df['low'].iloc[i-5:i+1]
+                last_5_delta = df['delta'].iloc[i-5:i+1]
+                
+                # Check for higher lows and increasing delta
+                if last_5_lows.is_monotonic_increasing and last_5_delta.sum() > 0:
+                    accumulation[i] = 1
+        
+        return accumulation
+    
+    def _detect_distribution(self, df):
+        """
+        Detect institutional distribution patterns
+        Returns 1 for distribution, 0 for no distribution
+        """
+        distribution = np.zeros(len(df))
+        
+        # Need at least 5 bars to detect patterns
+        if len(df) < 5:
+            return distribution
+        
+        for i in range(4, len(df)):
+            # Check for price going sideways or slightly up while delta is negative
+            price_change = (df['close'].iloc[i] - df['close'].iloc[i-4]) / df['close'].iloc[i-4]
+            delta_sum = df['delta'].iloc[i-4:i+1].sum()
+            
+            # Distribution: Price not moving much or slightly up, but negative selling pressure (delta)
+            if -0.005 <= price_change <= 0.02 and delta_sum < 0:
+                # Strong distribution if price tries to rise but keeps falling back
+                price_trying_up = (max(df['high'].iloc[i-4:i+1]) > df['close'].iloc[i-4] * 1.01)
+                if price_trying_up and df['close'].iloc[i] <= df['close'].iloc[i-4] * 1.005:
+                    distribution[i] = 1
+            
+            # Another distribution pattern: Price making lower highs while delta is increasingly negative
+            elif i >= 10:
+                last_5_highs = df['high'].iloc[i-5:i+1]
+                last_5_delta = df['delta'].iloc[i-5:i+1]
+                
+                # Check for lower highs and decreasing delta
+                if last_5_highs.is_monotonic_decreasing and last_5_delta.sum() < 0:
+                    distribution[i] = 1
+        
+        return distribution
+    
+    def _calculate_delta_divergence(self, df):
+        """
+        Calculate divergence between price movement and delta
+        Positive values indicate hidden buying pressure despite price decline
+        Negative values indicate hidden selling pressure despite price rise
+        """
+        divergence = np.zeros(len(df))
+        
+        # Need at least 3 bars to detect divergence
+        if len(df) < 3:
+            return divergence
+            
+        for i in range(2, len(df)):
+            # Calculate 3-bar price change and delta sum
+            price_change = (df['close'].iloc[i] - df['close'].iloc[i-2]) / df['close'].iloc[i-2]
+            delta_sum = df['delta'].iloc[i-2:i+1].sum()
+            
+            # Normalize delta for comparison
+            avg_volume = df['volume'].iloc[i-2:i+1].mean()
+            norm_delta = delta_sum / avg_volume if avg_volume > 0 else 0
+            
+            # Divergence occurs when price and delta move in opposite directions
+            if price_change < -0.005 and norm_delta > 0.1:
+                # Bullish divergence: Price down, delta up (hidden buying)
+                divergence[i] = norm_delta * 100  # Scale for easier interpretation
+            elif price_change > 0.005 and norm_delta < -0.1:
+                # Bearish divergence: Price up, delta down (hidden selling)
+                divergence[i] = norm_delta * 100  # Will be negative
+                
+        return divergence
 
 class AdvancedMarketAnalyzer:
     """Advanced market analyzer with ML-based regime detection and comprehensive fallbacks"""
@@ -50,6 +238,9 @@ class AdvancedMarketAnalyzer:
         self.volume_window = 20
         self.volatility_threshold = 0.02
         self.trend_strength_window = 10
+        
+        # Add order flow analyzer
+        self.order_flow_analyzer = OrderFlowAnalyzer()
         
     def detect_market_regime(self, df):
         """Detect market regime with ML clustering and statistical fallbacks"""
@@ -85,8 +276,7 @@ class AdvancedMarketAnalyzer:
             full_regimes = ['neutral'] * len(df)
             start_idx = len(df) - len(clusters)
             for i, regime in enumerate(clusters):
-                if start_idx + i < len(df):
-                    full_regimes[start_idx + i] = regime_mapping.get(regime, 'neutral')
+                full_regimes[start_idx + i] = regime_mapping.get(regime, 'neutral')
             
             return full_regimes
             
@@ -113,15 +303,32 @@ class AdvancedMarketAnalyzer:
         # High-low spread
         recent_df['hl_spread'] = (recent_df['high'] - recent_df['low']) / recent_df['close']
         
+        # Add Order Flow Imbalance features if available
+        if 'delta' in recent_df.columns:
+            recent_df['norm_delta'] = recent_df['delta'] / recent_df['volume'].where(recent_df['volume'] > 0, 1)
+            recent_df['delta_trend'] = recent_df['delta'].rolling(10).mean()
+            recent_df['delta_volatility'] = recent_df['delta'].rolling(10).std()
+        else:
+            # Add order flow metrics
+            enhanced_df = self.order_flow_analyzer.calculate_order_flow_imbalance(recent_df)
+            
+            # Add order flow features
+            recent_df['norm_delta'] = enhanced_df['delta'] / enhanced_df['volume'].where(enhanced_df['volume'] > 0, 1)
+            recent_df['delta_trend'] = enhanced_df['delta'].rolling(10).mean()
+            recent_df['delta_volatility'] = enhanced_df['delta'].rolling(10).std()
+            recent_df['inst_score'] = enhanced_df['inst_score']
+        
         # Select features and drop NaN
-        feature_cols = ['returns', 'volatility', 'price_trend', 'volume_trend', 'hl_spread']
+        feature_cols = ['returns', 'volatility', 'price_trend', 'volume_trend', 'hl_spread', 
+                        'norm_delta', 'delta_trend', 'delta_volatility']
         features = recent_df[feature_cols].dropna()
         
         return features.values
     
     def _map_clusters_to_regimes(self, features, clusters):
         """Map cluster numbers to meaningful market regimes"""
-        df_features = pd.DataFrame(features, columns=['returns', 'volatility', 'price_trend', 'volume_trend', 'hl_spread'])
+        df_features = pd.DataFrame(features, columns=['returns', 'volatility', 'price_trend', 'volume_trend', 
+                                                     'hl_spread', 'norm_delta', 'delta_trend', 'delta_volatility'])
         
         regime_mapping = {}
         for cluster_id in set(clusters):
@@ -130,13 +337,25 @@ class AdvancedMarketAnalyzer:
             
             avg_volatility = cluster_data['volatility'].mean()
             avg_trend = cluster_data['price_trend'].mean()
+            avg_delta = cluster_data['norm_delta'].mean() if 'norm_delta' in cluster_data else 0
             
             if avg_volatility > df_features['volatility'].quantile(0.7):
-                regime_mapping[cluster_id] = 'volatile'
+                if avg_delta > 0.1:
+                    regime_mapping[cluster_id] = 'volatile_bullish'
+                elif avg_delta < -0.1:
+                    regime_mapping[cluster_id] = 'volatile_bearish'
+                else:
+                    regime_mapping[cluster_id] = 'volatile'
             elif abs(avg_trend) > df_features['price_trend'].std():
-                regime_mapping[cluster_id] = 'trending' if avg_trend > 0 else 'declining'
+                if avg_trend > 0:
+                    regime_mapping[cluster_id] = 'bullish' if avg_delta > 0 else 'weak_bullish'
+                else:
+                    regime_mapping[cluster_id] = 'bearish' if avg_delta < 0 else 'weak_bearish'
             else:
-                regime_mapping[cluster_id] = 'neutral'
+                if abs(avg_delta) > 0.05:
+                    regime_mapping[cluster_id] = 'accumulation' if avg_delta > 0 else 'distribution'
+                else:
+                    regime_mapping[cluster_id] = 'neutral'
         
         return regime_mapping
     
@@ -144,6 +363,10 @@ class AdvancedMarketAnalyzer:
         """Statistical fallback for regime detection"""
         regimes = []
         window = min(20, len(df) // 2)
+        
+        # Get order flow features if not present
+        if 'delta' not in df.columns:
+            df = self.order_flow_analyzer.calculate_order_flow_imbalance(df)
         
         for i in range(len(df)):
             start_idx = max(0, i - window)
@@ -159,13 +382,42 @@ class AdvancedMarketAnalyzer:
             
             price_change = (subset['close'].iloc[-1] - subset['close'].iloc[0]) / subset['close'].iloc[0]
             
+            # Add order flow analysis
+            if 'delta' in subset.columns:
+                avg_delta = subset['delta'].mean() / subset['volume'].mean() if subset['volume'].mean() > 0 else 0
+                has_accumulation = subset['accumulation'].iloc[-5:].sum() > 0 if 'accumulation' in subset.columns else False
+                has_distribution = subset['distribution'].iloc[-5:].sum() > 0 if 'distribution' in subset.columns else False
+            else:
+                avg_delta = 0
+                has_accumulation = False
+                has_distribution = False
+            
             # Classify regime
             if volatility > self.volatility_threshold:
-                regimes.append('volatile')
-            elif abs(price_change) > 0.05:  # 5% change threshold
-                regimes.append('trending' if price_change > 0 else 'declining')
+                if price_change > 0.02 and avg_delta > 0:
+                    regimes.append('volatile_bullish')
+                elif price_change < -0.02 and avg_delta < 0:
+                    regimes.append('volatile_bearish')
+                else:
+                    regimes.append('volatile')
+            elif abs(price_change) > 0.05:
+                if price_change > 0:
+                    if avg_delta > 0 or has_accumulation:
+                        regimes.append('bullish')
+                    else:
+                        regimes.append('weak_bullish')
+                else:
+                    if avg_delta < 0 or has_distribution:
+                        regimes.append('bearish')
+                    else:
+                        regimes.append('weak_bearish')
             else:
-                regimes.append('neutral')
+                if has_accumulation:
+                    regimes.append('accumulation')
+                elif has_distribution:
+                    regimes.append('distribution')
+                else:
+                    regimes.append('neutral')
         
         return regimes
     
@@ -178,91 +430,21 @@ class AdvancedMarketAnalyzer:
             recent_returns = df['close'].pct_change().tail(10)
             volatility = recent_returns.std()
             
-            if volatility > 0.03:  # 3% daily volatility threshold
-                regimes[-10:] = ['volatile'] * 10
+            if volatility > 0.03:
+                recent_price_change = (df['close'].iloc[-1] - df['close'].iloc[-10]) / df['close'].iloc[-10]
+                if recent_price_change > 0:
+                    regimes = ['volatile_bullish'] * len(df)
+                else:
+                    regimes = ['volatile_bearish'] * len(df)
             else:
-                trend = (df['close'].iloc[-1] - df['close'].iloc[-10]) / df['close'].iloc[-10]
-                if abs(trend) > 0.05:
-                    regime = 'trending' if trend > 0 else 'declining'
-                    regimes[-10:] = [regime] * 10
+                price_direction = df['close'].iloc[-1] > df['close'].iloc[-5]
+                if price_direction:
+                    regimes = ['weak_bullish'] * len(df)
+                else:
+                    regimes = ['weak_bearish'] * len(df)
         
         return regimes
     
-    def calculate_adaptive_volatility(self, df):
-        """Calculate adaptive volatility with dynamic lookback"""
-        if len(df) < self.min_volatility_lookback:
-            return df['close'].pct_change().std()
-        
-        # Use adaptive window based on market conditions
-        base_returns = df['close'].pct_change()
-        recent_vol = base_returns.tail(self.min_volatility_lookback).std()
-        longer_vol = base_returns.tail(min(self.max_volatility_lookback, len(df))).std()
-        
-        # Weight recent vs longer-term volatility
-        weight = 0.7  # Favor recent volatility
-        adaptive_vol = weight * recent_vol + (1 - weight) * longer_vol
-        
-        return adaptive_vol
-    
-    def detect_anomalies(self, df):
-        """Detect price anomalies using isolation forest and statistical methods"""
-        try:
-            if SKLEARN_AVAILABLE and len(df) >= 20:
-                return self._ml_anomaly_detection(df)
-            else:
-                return self._statistical_anomaly_detection(df)
-        except Exception as e:
-            logger.warning(f"Anomaly detection failed: {e}")
-            return [1] * len(df)  # No anomalies detected
-    
-    def _ml_anomaly_detection(self, df):
-        """ML-based anomaly detection"""
-        # Prepare features
-        features = []
-        for i in range(1, len(df)):
-            price_change = (df['close'].iloc[i] - df['close'].iloc[i-1]) / df['close'].iloc[i-1]
-            volume_ratio = df['volume'].iloc[i] / (df['volume'].iloc[i-1] + 1e-8)
-            hl_ratio = (df['high'].iloc[i] - df['low'].iloc[i]) / df['close'].iloc[i]
-            features.append([price_change, volume_ratio, hl_ratio])
-        
-        if len(features) < 10:
-            return [1] * len(df)
-        
-        # Apply Isolation Forest
-        iso_forest = IsolationForest(contamination=0.1, random_state=42)
-        anomalies = iso_forest.fit_predict(features)
-        
-        # Extend to full length
-        full_anomalies = [1] + list(anomalies)
-        return full_anomalies
-    
-    def _statistical_anomaly_detection(self, df):
-        """Statistical anomaly detection using z-scores"""
-        anomalies = []
-        window = min(20, len(df))
-        
-        returns = df['close'].pct_change()
-        
-        for i in range(len(df)):
-            if i < window:
-                anomalies.append(1)  # Normal
-                continue
-            
-            recent_returns = returns.iloc[i-window:i]
-            mean_return = recent_returns.mean()
-            std_return = recent_returns.std()
-            
-            current_return = returns.iloc[i]
-            
-            # Check for anomaly using z-score
-            if std_return > 0:
-                z_score = abs((current_return - mean_return) / std_return)
-                anomalies.append(-1 if z_score > 3 else 1)  # -1 for anomaly
-            else:
-                anomalies.append(1)
-        
-        return anomalies
-
 class EnhancedSupertrendIndicator:
     """Enhanced Supertrend with adaptive parameters and multiple timeframe support"""
     
@@ -544,6 +726,7 @@ class TradingStrategy:
         3. Multi-indicator signals (medium priority - confirmation-based)
         4. Market condition specific signals (lower priority - trend following)
         5. Extreme market signals (lowest priority - specialized conditions)
+        6. Institutional order flow signals (integrates with other signals)
         
         Returns: 'BUY', 'SELL', or None
         """
@@ -554,7 +737,7 @@ class TradingStrategy:
                 logger.warning("Insufficient data for signal generation")
                 return None
             
-            # Add all technical indicators
+            # Add all technical indicators including order flow analysis
             df = self.add_indicators(df)
             
             # Validate critical data before signal generation
@@ -582,11 +765,9 @@ class TradingStrategy:
                 signal_candidates.append({
                     'signal': v_reversal_signal,
                     'priority': 1,
-                    'source': 'V_REVERSAL',
                     'confidence': 0.9,
-                    'description': f'V-shaped reversal in {market_condition} market'
+                    'source': 'v_reversal'
                 })
-                logger.info(f"V-reversal signal detected: {v_reversal_signal}")
             
             # === PRIORITY 2: Squeeze breakout signals (High volatility events) ===
             squeeze_signal = self.get_squeeze_breakout_signal(df)
@@ -594,61 +775,60 @@ class TradingStrategy:
                 signal_candidates.append({
                     'signal': squeeze_signal,
                     'priority': 2,
-                    'source': 'SQUEEZE_BREAKOUT',
                     'confidence': 0.85,
-                    'description': f'Squeeze breakout with volume confirmation'
+                    'source': 'squeeze_breakout'
                 })
-                logger.info(f"Squeeze breakout signal detected: {squeeze_signal}")
             
-            # === PRIORITY 3: Multi-indicator confirmation signals ===
+            # === PRIORITY 3: Institutional order flow signals ===
+            institutional_signal = self.get_institutional_order_flow_signal(df)
+            if institutional_signal:
+                signal_candidates.append({
+                    'signal': institutional_signal,
+                    'priority': 2,  # Same priority as squeeze signals
+                    'confidence': 0.85,
+                    'source': 'institutional_flow'
+                })
+            
+            # === PRIORITY 4: Multi-indicator confirmation signals ===
             multi_indicator_signal = self.get_multi_indicator_signal(df)
             if multi_indicator_signal:
                 signal_candidates.append({
                     'signal': multi_indicator_signal,
                     'priority': 3,
-                    'source': 'MULTI_INDICATOR',
                     'confidence': 0.8,
-                    'description': f'Multi-indicator confirmation with strong consensus'
+                    'source': 'multi_indicator'
                 })
-                logger.info(f"Multi-indicator signal detected: {multi_indicator_signal}")
             
-            # === PRIORITY 4: Market condition specific signals ===
+            # === PRIORITY 5: Market condition specific signals ===
             condition_signal = None
             if market_condition == 'SIDEWAYS':
                 condition_signal = self.get_sideways_signal(df)
-                source = 'SIDEWAYS_MARKET'
             elif market_condition in ['BULLISH', 'EXTREME_BULLISH']:
                 condition_signal = self.get_bullish_signal(df)
-                source = 'BULLISH_MARKET'
             elif market_condition in ['BEARISH', 'EXTREME_BEARISH']:
                 condition_signal = self.get_bearish_signal(df)
-                source = 'BEARISH_MARKET'
             
             if condition_signal:
                 signal_candidates.append({
                     'signal': condition_signal,
                     'priority': 4,
-                    'source': source,
                     'confidence': 0.7,
-                    'description': f'{market_condition} market condition signal'
+                    'source': 'market_condition'
                 })
-                logger.debug(f"Market condition signal detected: {condition_signal} from {source}")
             
-            # === PRIORITY 5: Extreme market signals (Specialized conditions) ===
+            # === PRIORITY 6: Extreme market signals (Specialized conditions) ===
             extreme_signal = self.get_extreme_market_signal(df)
             if extreme_signal:
                 signal_candidates.append({
                     'signal': extreme_signal,
                     'priority': 5,
-                    'source': 'EXTREME_MARKET',
-                    'confidence': 0.65,
-                    'description': f'Extreme market condition signal in {market_condition}'
+                    'confidence': 0.6,
+                    'source': 'extreme_market'
                 })
-                logger.debug(f"Extreme market signal detected: {extreme_signal}")
             
             # === SIGNAL CONSOLIDATION AND VALIDATION ===
             if not signal_candidates:
-                logger.debug("No signals detected from any method")
+                logger.debug("No signal candidates found")
                 return None
             
             # Sort by priority (lower number = higher priority)
@@ -658,19 +838,7 @@ class TradingStrategy:
             final_signal = self._validate_and_consolidate_signals(signal_candidates, df)
             
             if final_signal:
-                # Log the final decision
-                primary_candidate = signal_candidates[0]
-                logger.info(f"Final signal: {final_signal['signal']} from {final_signal['source']} "
-                           f"(Priority: {final_signal['priority']}, Confidence: {final_signal['confidence']:.2f}) "
-                           f"- {final_signal['description']}")
-                
-                # Update position sizing based on market conditions
-                if self.risk_manager:
-                    position_size = self.calculate_dynamic_position_size(df)
-                    self.risk_manager.update_position_sizing(position_size)
-                    self.position_size_pct = position_size
-                    logger.debug(f"Updated position size to {position_size:.2f}x for {market_condition} market")
-                
+                logger.info(f"Generated {final_signal['signal']} signal from {final_signal['source']} with priority {final_signal['priority']}")
                 return final_signal['signal']
             
             logger.debug("No valid signals after consolidation and validation")
@@ -679,6 +847,76 @@ class TradingStrategy:
         except Exception as e:
             logger.error(f"Error in get_signal: {e}", exc_info=True)
             return None
+    
+    def get_institutional_order_flow_signal(self, df):
+        """
+        Generate trading signals based on institutional order flow imbalance
+        """
+        if len(df) < 5 or 'inst_signal' not in df.columns:
+            return None
+            
+        latest = df.iloc[-1]
+        prev = df.iloc[-2] if len(df) > 1 else None
+        
+        # Return None if required data is missing
+        required_columns = ['inst_signal', 'accumulation', 'distribution', 'delta', 'close']
+        if not all(col in df.columns for col in required_columns):
+            logger.warning(f"Missing required columns for institutional order flow signal")
+            return None
+        
+        # Get last 5 bars for trend analysis
+        recent_bars = df.iloc[-5:]
+        
+        # 1. Strong institutional buying
+        strong_buying = (
+            latest['inst_signal'] == 1 and
+            latest['delta'] > 0 and
+            recent_bars['inst_signal'].sum() >= 2 and
+            latest['accumulation'] == 1
+        )
+        
+        # 2. Strong institutional selling
+        strong_selling = (
+            latest['inst_signal'] == -1 and
+            latest['delta'] < 0 and
+            recent_bars['inst_signal'].sum() <= -2 and
+            latest['distribution'] == 1
+        )
+        
+        # 3. Liquidity grab signals (price near VWAP with institutional activity)
+        liquidity_buy = (
+            latest['liquidity_zone'] == 1 and
+            latest['close'] < latest['vwap'] and
+            latest['delta'] > 0
+        )
+        
+        liquidity_sell = (
+            latest['liquidity_zone'] == -1 and
+            latest['close'] > latest['vwap'] and
+            latest['delta'] < 0
+        )
+        
+        # 4. Delta divergence (hidden institutional activity)
+        bullish_divergence = (
+            latest['delta_divergence'] > 30 and
+            recent_bars['close'].pct_change().sum() < -0.01
+        )
+        
+        bearish_divergence = (
+            latest['delta_divergence'] < -30 and
+            recent_bars['close'].pct_change().sum() > 0.01
+        )
+        
+        # Generate signal based on institutional activity
+        if (strong_buying or liquidity_buy or bullish_divergence) and not strong_selling:
+            logger.info(f"Institutional BUY signal detected: strong_buying={strong_buying}, liquidity_buy={liquidity_buy}, bullish_divergence={bullish_divergence}")
+            return "BUY"
+        
+        if (strong_selling or liquidity_sell or bearish_divergence) and not strong_buying:
+            logger.info(f"Institutional SELL signal detected: strong_selling={strong_selling}, liquidity_sell={liquidity_sell}, bearish_divergence={bearish_divergence}")
+            return "SELL"
+        
+        return None
     
     def _validate_and_consolidate_signals(self, signal_candidates, df):
         """
@@ -702,56 +940,79 @@ class TradingStrategy:
             buy_signals = [s for s in signal_candidates if s['signal'] == 'BUY']
             sell_signals = [s for s in signal_candidates if s['signal'] == 'SELL']
             
+            # Check for institutional confirmation if available
+            has_inst_confirmation = False
+            inst_bias = 0
+            
+            if 'inst_signal' in latest:
+                inst_bias = latest['inst_signal']
+                
+                # Strengthen signals that align with institutional activity
+                if inst_bias > 0:  # Institutional buying
+                    for signal in buy_signals:
+                        signal['confidence'] += 0.1
+                        signal['priority'] -= 0.5  # Improve priority (lower is better)
+                    has_inst_confirmation = len(buy_signals) > 0
+                    
+                elif inst_bias < 0:  # Institutional selling
+                    for signal in sell_signals:
+                        signal['confidence'] += 0.1
+                        signal['priority'] -= 0.5  # Improve priority
+                    has_inst_confirmation = len(sell_signals) > 0
+            
             # If no conflicting signals, return the highest priority signal
             if len(buy_signals) > 0 and len(sell_signals) == 0:
-                return buy_signals[0]  # Already sorted by priority
+                buy_signals.sort(key=lambda x: x['priority'])
+                logger.info(f"Selected BUY signal with priority {buy_signals[0]['priority']} from {buy_signals[0]['source']}" +
+                           (", confirmed by institutional activity" if has_inst_confirmation and inst_bias > 0 else ""))
+                return buy_signals[0]
             elif len(sell_signals) > 0 and len(buy_signals) == 0:
-                return sell_signals[0]  # Already sorted by priority
+                sell_signals.sort(key=lambda x: x['priority'])
+                logger.info(f"Selected SELL signal with priority {sell_signals[0]['priority']} from {sell_signals[0]['source']}" +
+                           (", confirmed by institutional activity" if has_inst_confirmation and inst_bias < 0 else ""))
+                return sell_signals[0]
             
             # Handle conflicting signals (both BUY and SELL present)
             if len(buy_signals) > 0 and len(sell_signals) > 0:
-                logger.warning(f"Conflicting signals detected: {len(buy_signals)} BUY, {len(sell_signals)} SELL")
+                # Sort by priority
+                buy_signals.sort(key=lambda x: x['priority'])
+                sell_signals.sort(key=lambda x: x['priority'])
                 
-                # Use priority-based resolution
-                highest_priority_buy = min(buy_signals, key=lambda x: x['priority'])
-                highest_priority_sell = min(sell_signals, key=lambda x: x['priority'])
+                best_buy = buy_signals[0]
+                best_sell = sell_signals[0]
                 
-                # If priorities are equal, use confidence
-                if highest_priority_buy['priority'] == highest_priority_sell['priority']:
-                    if highest_priority_buy['confidence'] > highest_priority_sell['confidence']:
-                        logger.info(f"Resolved conflict using confidence: BUY ({highest_priority_buy['confidence']:.2f}) > SELL ({highest_priority_sell['confidence']:.2f})")
-                        return highest_priority_buy
-                    elif highest_priority_sell['confidence'] > highest_priority_buy['confidence']:
-                        logger.info(f"Resolved conflict using confidence: SELL ({highest_priority_sell['confidence']:.2f}) > BUY ({highest_priority_buy['confidence']:.2f})")
-                        return highest_priority_sell
-                    else:
-                        # Equal confidence - use market condition bias
-                        if market_condition in ['BULLISH', 'EXTREME_BULLISH']:
-                            logger.info("Resolved tie using bullish market bias")
-                            return highest_priority_buy
-                        elif market_condition in ['BEARISH', 'EXTREME_BEARISH']:
-                            logger.info("Resolved tie using bearish market bias")
-                            return highest_priority_sell
-                        else:
-                            # Neutral market - cancel signals
-                            logger.info("Equal signals in neutral market - no signal generated")
-                            return None
+                # If one has significantly better priority or confidence, choose it
+                if best_buy['priority'] < best_sell['priority'] - 1:
+                    logger.info(f"Selected BUY signal (priority {best_buy['priority']}) over SELL signal (priority {best_sell['priority']})")
+                    return best_buy
+                elif best_sell['priority'] < best_buy['priority'] - 1:
+                    logger.info(f"Selected SELL signal (priority {best_sell['priority']}) over BUY signal (priority {best_buy['priority']})")
+                    return best_sell
                 
-                # Different priorities - use the higher priority (lower number)
-                if highest_priority_buy['priority'] < highest_priority_sell['priority']:
-                    logger.info(f"Resolved conflict using priority: BUY (P{highest_priority_buy['priority']}) > SELL (P{highest_priority_sell['priority']})")
-                    return highest_priority_buy
+                # Otherwise, use institutional bias to break the tie
+                if inst_bias > 0:
+                    logger.info(f"Selected BUY signal over SELL signal based on institutional buying bias")
+                    return best_buy
+                elif inst_bias < 0:
+                    logger.info(f"Selected SELL signal over BUY signal based on institutional selling bias")
+                    return best_sell
+                
+                # If still tied, prefer the one that aligns with market condition
+                if market_condition in ['BULLISH', 'EXTREME_BULLISH', 'accumulation']:
+                    return best_buy
+                elif market_condition in ['BEARISH', 'EXTREME_BEARISH', 'distribution']:
+                    return best_sell
                 else:
-                    logger.info(f"Resolved conflict using priority: SELL (P{highest_priority_sell['priority']}) > BUY (P{highest_priority_buy['priority']})")
-                    return highest_priority_sell
+                    # Last resort: pick the one with highest confidence
+                    return best_buy if best_buy['confidence'] >= best_sell['confidence'] else best_sell
             
             # Apply additional validation filters
-            selected_signal = buy_signals[0] if buy_signals else sell_signals[0]
+            final_signal = buy_signals[0] if buy_signals else sell_signals[0]
             
             # Volume validation - ensure sufficient volume for the signal
             volume_ratio = latest.get('volume_ratio', 1.0)
             min_volume_for_priority = {1: 1.0, 2: 1.2, 3: 1.0, 4: 1.3, 5: 1.1, 6: 1.0}
-            required_volume = min_volume_for_priority.get(selected_signal['priority'], 1.1)
+            required_volume = min_volume_for_priority.get(final_signal['priority'], 1.1)
             
             if volume_ratio < required_volume:
                 logger.warning(f"Signal rejected due to insufficient volume: {volume_ratio:.2f} < {required_volume:.2f}")
@@ -759,8 +1020,8 @@ class TradingStrategy:
             
             # RSI extreme validation - avoid signals in very extreme RSI conditions unless high priority
             rsi = latest.get('rsi', 50)
-            if selected_signal['priority'] > 2:  # Lower priority signals
-                if (selected_signal['signal'] == 'BUY' and rsi > 85) or (selected_signal['signal'] == 'SELL' and rsi < 15):
+            if final_signal['priority'] > 2:  # Lower priority signals
+                if (final_signal['signal'] == 'BUY' and rsi > 85) or (final_signal['signal'] == 'SELL' and rsi < 15):
                     logger.warning(f"Signal rejected due to extreme RSI: {rsi:.1f}")
                     return None
             
@@ -769,21 +1030,21 @@ class TradingStrategy:
                 sentiment = self.calculate_market_sentiment(df).iloc[-1]
                 # Check if signal aligns with strong market sentiment
                 if abs(sentiment) > 0.7:  # Strong sentiment
-                    if (selected_signal['signal'] == 'BUY' and sentiment < -0.5) or \
-                       (selected_signal['signal'] == 'SELL' and sentiment > 0.5):
+                    if (final_signal['signal'] == 'BUY' and sentiment < -0.5) or \
+                       (final_signal['signal'] == 'SELL' and sentiment > 0.5):
                         # Signal against strong sentiment - reduce confidence or reject low priority signals
-                        if selected_signal['priority'] > 3:
-                            logger.warning(f"Signal against strong sentiment rejected: {selected_signal['signal']} vs sentiment {sentiment:.2f}")
+                        if final_signal['priority'] > 3:
+                            logger.warning(f"Signal against strong sentiment rejected: {final_signal['signal']} vs sentiment {sentiment:.2f}")
                             return None
                         else:
                             # High priority signal - reduce confidence but allow
-                            selected_signal['confidence'] *= 0.8
-                            logger.info(f"High priority signal against sentiment - confidence reduced to {selected_signal['confidence']:.2f}")
+                            final_signal['confidence'] *= 0.8
+                            logger.info(f"High priority signal against sentiment - confidence reduced to {final_signal['confidence']:.2f}")
             except Exception:
                 pass  # Sentiment validation failed, continue without it
             
-            logger.info(f"Signal validated and approved: {selected_signal['signal']} from {selected_signal['source']}")
-            return selected_signal
+            logger.info(f"Signal validated and approved: {final_signal['signal']} from {final_signal['source']}")
+            return final_signal
             
         except Exception as e:
             logger.error(f"Error in signal validation: {e}")
@@ -805,6 +1066,7 @@ class RaysolDynamicStrategy(TradingStrategy):
     - Fibonacci level integration for support/resistance
     - Enhanced momentum filtering and multi-indicator confirmation
     - Sophisticated reversal detection
+    - Order Flow Imbalance for institutional activity detection
     """
     def __init__(self, 
                  trend_ema_fast=8,
@@ -860,6 +1122,9 @@ class RaysolDynamicStrategy(TradingStrategy):
             period=self.supertrend_period, 
             multiplier=self.supertrend_multiplier
         )
+        
+        # Add order flow analyzer
+        self.order_flow_analyzer = OrderFlowAnalyzer()
         
         # Initialize trade tracking
         self.consecutive_losses = 0
@@ -1752,8 +2017,8 @@ class RaysolDynamicStrategy(TradingStrategy):
         
         # Adjust signal thresholds based on market condition - higher thresholds to reduce false signals
         market_condition = latest['market_condition']
-        bull_threshold = 8.0  # Increased from 7.0 to reduce false signals
-        bear_threshold = 8.0  # Increased from 7.0 to reduce false signals
+        bull_threshold = 7.0  # Increased from 7.0 to reduce false signals
+        bear_threshold = 7.0  # Increased from 7.0 to reduce false signals
         
         # Volume requirement - ensure we have enough volume to validate signals
         min_volume_ratio = 1.2  # Minimum volume needed relative to average
