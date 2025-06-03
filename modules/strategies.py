@@ -2848,7 +2848,7 @@ def get_strategy_for_symbol(symbol, strategy_name=None):
     if strategy_name:
         return get_strategy(strategy_name)
     
-    # Default to XRPUSDT strategy for any symbol
+    # Default to SUIUSDT strategy for any symbol
     return RaysolDynamicStrategy()
     
     # Default to base strategy if needed
