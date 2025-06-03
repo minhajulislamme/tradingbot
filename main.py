@@ -737,6 +737,14 @@ def check_for_signals(symbol=None):
         signal = strategy.get_signal(klines)
         logger.info(f"Strategy signal: {signal}")
         
+        # Update market condition in risk manager from strategy
+        try:
+            if hasattr(strategy, 'current_market_condition') and strategy.current_market_condition:
+                risk_manager.set_market_condition(strategy.current_market_condition)
+                logger.debug(f"Updated market condition to: {strategy.current_market_condition}")
+        except Exception as e:
+            logger.warning(f"Could not update market condition: {e}")
+        
         # Verify bot status before proceeding with trades
         if not binance_client:
             logger.error("Binance client not initialized. Cannot place trades.")

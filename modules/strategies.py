@@ -751,6 +751,9 @@ class TradingStrategy:
             market_condition = latest['market_condition']
             current_price = latest['close']
             
+            # Store current market condition for external access
+            self.current_market_condition = market_condition
+            
             # Check for cool-off period after consecutive losses
             if self.in_cooloff_period(current_time):
                 logger.info(f"In cool-off period. Skipping signal generation.")
@@ -799,7 +802,7 @@ class TradingStrategy:
                     'source': 'multi_indicator'
                 })
             
-            # === PRIORITY 5: Market condition specific signals ===
+            # === PRIORITY 4: Market condition specific signals ===
             condition_signal = None
             if market_condition == 'SIDEWAYS':
                 condition_signal = self.get_sideways_signal(df)
@@ -811,9 +814,19 @@ class TradingStrategy:
             if condition_signal:
                 signal_candidates.append({
                     'signal': condition_signal,
-                    'priority': 4,
-                    'confidence': 0.7,
+                    'priority': 3,  # Increased priority - was 4
+                    'confidence': 0.75,  # Increased confidence - was 0.7
                     'source': 'market_condition'
+                })
+            
+            # === PRIORITY 5: Simple RSI signals (New - for more frequent trading) ===
+            simple_rsi_signal = self.get_simple_rsi_signal(df)
+            if simple_rsi_signal:
+                signal_candidates.append({
+                    'signal': simple_rsi_signal,
+                    'priority': 4,
+                    'confidence': 0.6,
+                    'source': 'simple_rsi'
                 })
             
             # === PRIORITY 6: Extreme market signals (Specialized conditions) ===
@@ -824,6 +837,26 @@ class TradingStrategy:
                     'priority': 5,
                     'confidence': 0.6,
                     'source': 'extreme_market'
+                })
+            
+            # === PRIORITY 6: Momentum scalping signals (New - for very frequent trading) ===
+            momentum_signal = self.get_momentum_scalping_signal(df)
+            if momentum_signal:
+                signal_candidates.append({
+                    'signal': momentum_signal,
+                    'priority': 5,
+                    'confidence': 0.55,
+                    'source': 'momentum_scalping'
+                })
+            
+            # === PRIORITY 7: Price action signals (New - for pattern-based trading) ===
+            price_action_signal = self.get_price_action_signal(df)
+            if price_action_signal:
+                signal_candidates.append({
+                    'signal': price_action_signal,
+                    'priority': 5,
+                    'confidence': 0.6,
+                    'source': 'price_action'
                 })
             
             # === SIGNAL CONSOLIDATION AND VALIDATION ===
@@ -1009,10 +1042,10 @@ class TradingStrategy:
             # Apply additional validation filters
             final_signal = buy_signals[0] if buy_signals else sell_signals[0]
             
-            # Volume validation - ensure sufficient volume for the signal
+            # Volume validation - ensure sufficient volume for the signal (more lenient)
             volume_ratio = latest.get('volume_ratio', 1.0)
-            min_volume_for_priority = {1: 1.0, 2: 1.2, 3: 1.0, 4: 1.3, 5: 1.1, 6: 1.0}
-            required_volume = min_volume_for_priority.get(final_signal['priority'], 1.1)
+            min_volume_for_priority = {1: 0.8, 2: 1.0, 3: 0.8, 4: 1.0, 5: 0.9, 6: 0.8}  # Reduced requirements
+            required_volume = min_volume_for_priority.get(final_signal['priority'], 0.9)  # Reduced from 1.1
             
             if volume_ratio < required_volume:
                 logger.warning(f"Signal rejected due to insufficient volume: {volume_ratio:.2f} < {required_volume:.2f}")
@@ -1073,11 +1106,11 @@ class RaysolDynamicStrategy(TradingStrategy):
                  trend_ema_slow=21,
                  volatility_lookback=20,
                  rsi_period=14,
-                 rsi_overbought=70,
-                 rsi_oversold=30,
+                 rsi_overbought=70,  # More aggressive - was 75
+                 rsi_oversold=30,   # More aggressive - was 25
                  volume_ma_period=20,
                  adx_period=14,
-                 adx_threshold=25,
+                 adx_threshold=15,  # Lower threshold - was 20
                  sideways_threshold=15,
                  # RAYSOL-specific parameters
                  volatility_multiplier=1.1,
@@ -1087,8 +1120,8 @@ class RaysolDynamicStrategy(TradingStrategy):
                  supertrend_multiplier=3.0,
                  fibonacci_levels=[0.236, 0.382, 0.5, 0.618, 0.786],
                  squeeze_threshold=0.5,
-                 cooloff_period=3,
-                 max_consecutive_losses=2):
+                 cooloff_period=0.5,  # Reduced from 1 minute to 30 seconds
+                 max_consecutive_losses=4):  # Increased from 3 to 4
         
         super().__init__('RaysolDynamicStrategy')
         
@@ -2015,30 +2048,35 @@ class RaysolDynamicStrategy(TradingStrategy):
             
         # === MARKET CONDITION ADJUSTMENT ===
         
-        # Adjust signal thresholds based on market condition - higher thresholds to reduce false signals
+        # Adjust signal thresholds based on market condition - much more aggressive
         market_condition = latest['market_condition']
-        bull_threshold = 8.0  # Increased from 7.0 to reduce false signals
-        bear_threshold = 8.0  # Increased from 7.0 to reduce false signals
+        bull_threshold = 4.0  # Reduced from 5.5 for much more aggressive trading
+        bear_threshold = 4.0  # Reduced from 5.5 for much more aggressive trading
         
-        # Volume requirement - ensure we have enough volume to validate signals
-        min_volume_ratio = 1.2  # Minimum volume needed relative to average
+        # Volume requirement - much more lenient for frequent trading
+        min_volume_ratio = 0.7  # Reduced from 1.0 for more signals
         has_sufficient_volume = latest['volume_ratio'] >= min_volume_ratio
         
-        # Add requirement for sufficient volume in trending markets
+        # Add requirement for sufficient volume in trending markets - much more lenient
         if not has_sufficient_volume:
-            bull_threshold += 1.0  # Make it harder to trigger without enough volume
-            bear_threshold += 1.0  # Make it harder to trigger without enough volume
+            bull_threshold += 0.3  # Reduced penalty - was 0.5
+            bear_threshold += 0.3  # Reduced penalty - was 0.5
         
         if market_condition in ['BULLISH', 'EXTREME_BULLISH']:
-            bull_threshold -= 1.0  # Easier to trigger buy in bullish market, but still higher than before
-            bear_threshold += 1.5  # Much harder to trigger sell in bullish market
+            bull_threshold -= 2.0  # Much more aggressive - was 1.5
+            bear_threshold += 0.5   # Reduced from 1.0 - less restrictive on sells
         elif market_condition in ['BEARISH', 'EXTREME_BEARISH']:
-            bull_threshold += 1.5  # Much harder to trigger buy in bearish market
-            bear_threshold -= 1.0  # Easier to trigger sell in bearish market, but still higher than before
+            bull_threshold += 0.5   # Reduced from 1.0 - less restrictive on buys
+            bear_threshold -= 2.0   # Much more aggressive - was 1.5
         elif market_condition == 'SQUEEZE':
-            # In squeeze, wait for much stronger confirmation
-            bull_threshold += 1.5
-            bear_threshold += 1.5
+            # In squeeze, wait for stronger confirmation but not as much
+            bull_threshold += 0.3  # Reduced from 0.5
+            bear_threshold += 0.3  # Reduced from 0.5
+        
+        # Add scalping mode for sideways markets
+        if market_condition == 'SIDEWAYS':
+            bull_threshold -= 1.0  # More aggressive in sideways markets
+            bear_threshold -= 1.0  # More aggressive in sideways markets
             
         # === FINAL SIGNAL DETERMINATION ===
         
@@ -2069,14 +2107,14 @@ class RaysolDynamicStrategy(TradingStrategy):
         # Return signal based on very strong confirmation from multiple indicators
         # Added more stringent requirements with 2x difference instead of 1.5x
         if (bullish_signals >= bull_threshold and 
-            bullish_signals > bearish_signals * 2.0 and  # Stronger dominance required
-            (has_momentum or bull_strength > 60)):  # Either has momentum or strong overall score
+            bullish_signals > bearish_signals * 1.5 and  # Reduced from 2.0 for more signals
+            (has_momentum or bull_strength > 45)):  # Reduced from 60 for more signals
             logger.info(f"Strong bullish confirmation: {bullish_signals:.1f} signals ({bull_strength:.1f}%)")
             return 'BUY'
             
         if (bearish_signals >= bear_threshold and 
-            bearish_signals > bullish_signals * 2.0 and  # Stronger dominance required
-            (has_momentum or bear_strength > 60)):  # Either has momentum or strong overall score
+            bearish_signals > bullish_signals * 1.5 and  # Reduced from 2.0 for more signals
+            (has_momentum or bear_strength > 45)):  # Reduced from 60 for more signals
             logger.info(f"Strong bearish confirmation: {bearish_signals:.1f} signals ({bear_strength:.1f}%)")
             return 'SELL'
             
@@ -2116,8 +2154,8 @@ class RaysolDynamicStrategy(TradingStrategy):
             prev = df.iloc[-2]
             market_condition = latest['market_condition']
             
-            # Adjust RSI thresholds based on market condition
-            rsi_oversold = 25 if market_condition == 'EXTREME_BULLISH' else 35
+            # Adjust RSI thresholds based on market condition - more aggressive
+            rsi_oversold = 20 if market_condition == 'EXTREME_BULLISH' else 30  # More aggressive - was 25/35
             
             # More aggressive oversold conditions for BUY signals in bullish markets
             if latest['rsi'] < rsi_oversold:
@@ -2157,8 +2195,8 @@ class RaysolDynamicStrategy(TradingStrategy):
             prev = df.iloc[-2]
             market_condition = latest['market_condition']
             
-            # Adjust RSI thresholds based on market condition
-            rsi_overbought = 75 if market_condition == 'EXTREME_BEARISH' else 65
+            # Adjust RSI thresholds based on market condition - more aggressive
+            rsi_overbought = 80 if market_condition == 'EXTREME_BEARISH' else 70  # More aggressive - was 75/65
             
             # More aggressive overbought conditions for SELL signals in bearish markets
             if latest['rsi'] > rsi_overbought:
@@ -2184,6 +2222,150 @@ class RaysolDynamicStrategy(TradingStrategy):
             
         except Exception as e:
             logger.error(f"Error in get_bearish_signal: {e}")
+            return None
+    
+    def get_simple_rsi_signal(self, df):
+        """
+        Simple RSI-based signals for more frequent trading opportunities
+        """
+        if len(df) < 2:
+            return None
+            
+        try:
+            latest = df.iloc[-1]
+            
+            # More aggressive RSI oversold/overbought conditions with lower volume requirement
+            if latest['rsi'] < 30 and latest['volume_ratio'] > 0.6:  # More lenient
+                return 'BUY'
+            elif latest['rsi'] > 70 and latest['volume_ratio'] > 0.6:  # More lenient
+                return 'SELL'
+                
+            # RSI momentum signals with lower thresholds
+            if len(df) >= 3:
+                prev = df.iloc[-2]
+                prev2 = df.iloc[-3]
+                
+                # RSI momentum building up - more sensitive
+                if (prev2['rsi'] < 40 and prev['rsi'] < 45 and latest['rsi'] > 45 and
+                    latest['close'] > prev['close']):
+                    return 'BUY'
+                elif (prev2['rsi'] > 60 and prev['rsi'] > 55 and latest['rsi'] < 55 and
+                      latest['close'] < prev['close']):
+                    return 'SELL'
+                    
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error in get_simple_rsi_signal: {e}")
+            return None
+    
+    def get_momentum_scalping_signal(self, df):
+        """
+        Generate momentum-based scalping signals for very frequent trading
+        """
+        if len(df) < 5:
+            return None
+            
+        try:
+            latest = df.iloc[-1]
+            prev = df.iloc[-2]
+            prev2 = df.iloc[-3]
+            prev3 = df.iloc[-4]
+            
+            # Calculate short-term momentum
+            price_momentum_1 = (latest['close'] - prev['close']) / prev['close']
+            price_momentum_2 = (prev['close'] - prev2['close']) / prev2['close']
+            price_momentum_3 = (prev2['close'] - prev3['close']) / prev3['close']
+            
+            # Volume momentum
+            volume_increasing = latest['volume'] > prev['volume'] * 0.8
+            
+            # Strong momentum BUY signal
+            if (price_momentum_1 > 0.002 and  # 0.2% move
+                price_momentum_2 > 0 and
+                latest['close'] > latest['ema_fast'] and
+                volume_increasing):
+                return 'BUY'
+                
+            # Strong momentum SELL signal  
+            if (price_momentum_1 < -0.002 and  # -0.2% move
+                price_momentum_2 < 0 and
+                latest['close'] < latest['ema_fast'] and
+                volume_increasing):
+                return 'SELL'
+                
+            # Momentum reversal signals
+            if (price_momentum_1 > 0.003 and  # Strong reversal
+                price_momentum_2 < -0.002 and
+                latest['rsi'] < 60):  # Not overbought
+                return 'BUY'
+                
+            if (price_momentum_1 < -0.003 and  # Strong reversal
+                price_momentum_2 > 0.002 and
+                latest['rsi'] > 40):  # Not oversold
+                return 'SELL'
+                
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error in get_momentum_scalping_signal: {e}")
+            return None
+    
+    def get_price_action_signal(self, df):
+        """
+        Generate signals based on price action patterns
+        """
+        if len(df) < 5:
+            return None
+            
+        try:
+            latest = df.iloc[-1]
+            prev = df.iloc[-2]
+            prev2 = df.iloc[-3]
+            prev3 = df.iloc[-4]
+            
+            # Bullish price action patterns
+            # Higher lows with volume
+            if (latest['low'] > prev['low'] and 
+                prev['low'] > prev2['low'] and
+                latest['close'] > latest['open'] and
+                latest['volume_ratio'] > 0.8):
+                return 'BUY'
+                
+            # Break above previous high with volume
+            if (latest['high'] > prev['high'] and
+                latest['close'] > prev['high'] and
+                latest['volume_ratio'] > 1.2):
+                return 'BUY'
+                
+            # Bearish price action patterns
+            # Lower highs with volume
+            if (latest['high'] < prev['high'] and 
+                prev['high'] < prev2['high'] and
+                latest['close'] < latest['open'] and
+                latest['volume_ratio'] > 0.8):
+                return 'SELL'
+                
+            # Break below previous low with volume
+            if (latest['low'] < prev['low'] and
+                latest['close'] < prev['low'] and
+                latest['volume_ratio'] > 1.2):
+                return 'SELL'
+                
+            # Doji reversal patterns
+            body_size = abs(latest['close'] - latest['open']) / latest['close']
+            if body_size < 0.002:  # Very small body (doji)
+                if (latest['close'] > latest['bb_upper'] * 0.99 and
+                    latest['rsi'] > 70):
+                    return 'SELL'  # Doji at resistance
+                elif (latest['close'] < latest['bb_lower'] * 1.01 and
+                      latest['rsi'] < 30):
+                    return 'BUY'  # Doji at support
+                    
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error in get_price_action_signal: {e}")
             return None
             
     def update_trade_result(self, was_profitable):

@@ -33,9 +33,21 @@ class RiskManager:
         
     def set_market_condition(self, market_condition):
         """Set the current market condition for compatibility with existing code"""
-        if market_condition in ['BULLISH', 'BEARISH', 'SIDEWAYS', 'EXTREME_BULLISH', 'EXTREME_BEARISH', 'SQUEEZE']:
+        allowed_conditions = [
+            'BULLISH', 'BEARISH', 'SIDEWAYS', 'EXTREME_BULLISH', 'EXTREME_BEARISH', 'SQUEEZE',
+            'UNKNOWN', 'volatile_bullish', 'volatile_bearish', 'volatile', 'weak_bullish', 
+            'weak_bearish', 'accumulation', 'distribution', 'neutral', 'bullish', 'bearish'
+        ]
+        
+        if market_condition in allowed_conditions:
             if self.current_market_condition != market_condition:
                 logger.info(f"Market condition changed to {market_condition}")
+                self.current_market_condition = market_condition
+        else:
+            logger.warning(f"Unknown market condition received: {market_condition}")
+            # Still set it but log the warning
+            if self.current_market_condition != market_condition:
+                logger.info(f"Market condition changed to {market_condition} (unknown type)")
                 self.current_market_condition = market_condition
         
     def calculate_position_size(self, symbol, side, price, stop_loss_price=None):
