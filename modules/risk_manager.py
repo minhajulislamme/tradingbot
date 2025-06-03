@@ -482,7 +482,7 @@ class RiskManager:
             # Keep the current multiplier
         return
 
-    def test_position_sizing(self, symbol='SUIUSDT'):
+    def test_position_sizing(self, symbol='XRPUSDT'):
         """
         Test method to verify position sizing and risk management are working correctly
         Returns details about current risk settings

@@ -1106,11 +1106,11 @@ class RaysolDynamicStrategy(TradingStrategy):
                  trend_ema_slow=21,
                  volatility_lookback=20,
                  rsi_period=14,
-                 rsi_overbought=70,  # More aggressive - was 75
-                 rsi_oversold=30,   # More aggressive - was 25
+                 rsi_overbought=75,  # More standard - restored from 70
+                 rsi_oversold=25,   # More standard - restored from 30
                  volume_ma_period=20,
                  adx_period=14,
-                 adx_threshold=15,  # Lower threshold - was 20
+                 adx_threshold=20,  # Standard threshold - restored from 15
                  sideways_threshold=15,
                  # RAYSOL-specific parameters
                  volatility_multiplier=1.1,
@@ -1120,8 +1120,8 @@ class RaysolDynamicStrategy(TradingStrategy):
                  supertrend_multiplier=3.0,
                  fibonacci_levels=[0.236, 0.382, 0.5, 0.618, 0.786],
                  squeeze_threshold=0.5,
-                 cooloff_period=0.5,  # Reduced from 1 minute to 30 seconds
-                 max_consecutive_losses=4):  # Increased from 3 to 4
+                 cooloff_period=2.0,  # Increased from 30 seconds to 2 minutes for more standard timing
+                 max_consecutive_losses=3):  # Increased from 3 to 4
         
         super().__init__('RaysolDynamicStrategy')
         
@@ -2048,35 +2048,35 @@ class RaysolDynamicStrategy(TradingStrategy):
             
         # === MARKET CONDITION ADJUSTMENT ===
         
-        # Adjust signal thresholds based on market condition - much more aggressive
+        # Adjust signal thresholds based on market condition - restored to standard values
         market_condition = latest['market_condition']
-        bull_threshold = 4.0  # Reduced from 5.5 for much more aggressive trading
-        bear_threshold = 4.0  # Reduced from 5.5 for much more aggressive trading
+        bull_threshold = 5.5  # Restored to standard values for balanced trading
+        bear_threshold = 5.5  # Restored to standard values for balanced trading
         
-        # Volume requirement - much more lenient for frequent trading
-        min_volume_ratio = 0.7  # Reduced from 1.0 for more signals
+        # Volume requirement - restored to standard for better signal quality
+        min_volume_ratio = 1.0  # Restored to standard for higher quality signals
         has_sufficient_volume = latest['volume_ratio'] >= min_volume_ratio
         
-        # Add requirement for sufficient volume in trending markets - much more lenient
+        # Add requirement for sufficient volume in trending markets - standard requirements
         if not has_sufficient_volume:
-            bull_threshold += 0.3  # Reduced penalty - was 0.5
-            bear_threshold += 0.3  # Reduced penalty - was 0.5
+            bull_threshold += 0.5  # Standard penalty for low volume
+            bear_threshold += 0.5  # Standard penalty for low volume
         
         if market_condition in ['BULLISH', 'EXTREME_BULLISH']:
-            bull_threshold -= 2.0  # Much more aggressive - was 1.5
-            bear_threshold += 0.5   # Reduced from 1.0 - less restrictive on sells
+            bull_threshold -= 1.0  # Moderate reduction for bullish markets
+            bear_threshold += 1.0   # Standard increase for counter-trend signals
         elif market_condition in ['BEARISH', 'EXTREME_BEARISH']:
-            bull_threshold += 0.5   # Reduced from 1.0 - less restrictive on buys
-            bear_threshold -= 2.0   # Much more aggressive - was 1.5
+            bull_threshold += 1.0   # Standard increase for counter-trend signals
+            bear_threshold -= 1.0   # Moderate reduction for bearish markets
         elif market_condition == 'SQUEEZE':
-            # In squeeze, wait for stronger confirmation but not as much
-            bull_threshold += 0.3  # Reduced from 0.5
-            bear_threshold += 0.3  # Reduced from 0.5
+            # In squeeze, wait for stronger confirmation
+            bull_threshold += 0.5  # Standard increase for breakout confirmation
+            bear_threshold += 0.5  # Standard increase for breakout confirmation
         
-        # Add scalping mode for sideways markets
+        # Reduced scalping mode for sideways markets for more balanced trading
         if market_condition == 'SIDEWAYS':
-            bull_threshold -= 1.0  # More aggressive in sideways markets
-            bear_threshold -= 1.0  # More aggressive in sideways markets
+            bull_threshold -= 0.5  # Less aggressive in sideways markets
+            bear_threshold -= 0.5  # Less aggressive in sideways markets
             
         # === FINAL SIGNAL DETERMINATION ===
         
@@ -2104,17 +2104,16 @@ class RaysolDynamicStrategy(TradingStrategy):
         logger.debug(f"Multi-indicator signals - Bullish: {bullish_signals:.1f} ({bull_strength:.1f}%), " +
                     f"Bearish: {bearish_signals:.1f} ({bear_strength:.1f}%)")
         
-        # Return signal based on very strong confirmation from multiple indicators
-        # Added more stringent requirements with 2x difference instead of 1.5x
+        # Return signal based on strong confirmation from multiple indicators - standard requirements
         if (bullish_signals >= bull_threshold and 
-            bullish_signals > bearish_signals * 1.5 and  # Reduced from 2.0 for more signals
-            (has_momentum or bull_strength > 45)):  # Reduced from 60 for more signals
+            bullish_signals > bearish_signals * 2.0 and  # Restored to 2.0 for stronger confirmation
+            (has_momentum or bull_strength > 60)):  # Restored to 60 for higher quality signals
             logger.info(f"Strong bullish confirmation: {bullish_signals:.1f} signals ({bull_strength:.1f}%)")
             return 'BUY'
             
         if (bearish_signals >= bear_threshold and 
-            bearish_signals > bullish_signals * 1.5 and  # Reduced from 2.0 for more signals
-            (has_momentum or bear_strength > 45)):  # Reduced from 60 for more signals
+            bearish_signals > bullish_signals * 2.0 and  # Restored to 2.0 for stronger confirmation
+            (has_momentum or bear_strength > 60)):  # Restored to 60 for higher quality signals
             logger.info(f"Strong bearish confirmation: {bearish_signals:.1f} signals ({bear_strength:.1f}%)")
             return 'SELL'
             
@@ -2144,7 +2143,7 @@ class RaysolDynamicStrategy(TradingStrategy):
     
     def get_bullish_signal(self, df):
         """
-        Enhanced signal for bullish market with aggressive trend thresholds
+        Enhanced signal for bullish market with standard trend thresholds
         """
         if len(df) < 3:
             return None
@@ -2154,27 +2153,32 @@ class RaysolDynamicStrategy(TradingStrategy):
             prev = df.iloc[-2]
             market_condition = latest['market_condition']
             
-            # Adjust RSI thresholds based on market condition - more aggressive
-            rsi_oversold = 20 if market_condition == 'EXTREME_BULLISH' else 30  # More aggressive - was 25/35
+            # Adjust RSI thresholds based on market condition - standard values
+            rsi_oversold = 25 if market_condition == 'EXTREME_BULLISH' else 30  # More standard
             
-            # More aggressive oversold conditions for BUY signals in bullish markets
-            if latest['rsi'] < rsi_oversold:
+            # Standard oversold conditions for BUY signals in bullish markets
+            if (latest['rsi'] < rsi_oversold and 
+                latest['volume_ratio'] > 1.0):  # Volume confirmation required
                 return 'BUY'
                 
-            # BUY on MACD crossover with volume confirmation
+            # BUY on MACD crossover with strong volume confirmation
             if (prev['macd'] < prev['macd_signal'] and 
                 latest['macd'] > latest['macd_signal'] and 
-                latest['volume_ratio'] > 1.2):
+                latest['volume_ratio'] > 1.5 and  # Higher volume requirement
+                latest['close'] > latest['ema_fast']):  # Trend confirmation
                 return 'BUY'
                 
-            # BUY on Supertrend direction change
-            if prev['supertrend_direction'] == -1 and latest['supertrend_direction'] == 1:
+            # BUY on Supertrend direction change with confirmation
+            if (prev['supertrend_direction'] == -1 and 
+                latest['supertrend_direction'] == 1 and
+                latest['volume_ratio'] > 1.2):  # Volume confirmation
                 return 'BUY'
                 
-            # Sell only on extreme overbought conditions in bullish markets
-            if (latest['rsi'] > 80 and 
-                latest['close'] > latest['bb_upper'] * 1.01 and
-                latest['close'] > latest['vwap'] * 1.03):
+            # Sell on standard overbought conditions in bullish markets
+            if (latest['rsi'] > 75 and  # Less extreme threshold
+                latest['close'] > latest['bb_upper'] * 1.005 and  # Closer to resistance
+                latest['close'] > latest['vwap'] * 1.02 and  # Less extreme
+                latest['volume_ratio'] > 1.0):  # Volume confirmation
                 return 'SELL'
                 
             return None
@@ -2185,7 +2189,7 @@ class RaysolDynamicStrategy(TradingStrategy):
     
     def get_bearish_signal(self, df):
         """
-        Enhanced signal for bearish market with aggressive trend thresholds
+        Enhanced signal for bearish market with standard trend thresholds
         """
         if len(df) < 3:
             return None
@@ -2195,27 +2199,32 @@ class RaysolDynamicStrategy(TradingStrategy):
             prev = df.iloc[-2]
             market_condition = latest['market_condition']
             
-            # Adjust RSI thresholds based on market condition - more aggressive
-            rsi_overbought = 80 if market_condition == 'EXTREME_BEARISH' else 70  # More aggressive - was 75/65
+            # Adjust RSI thresholds based on market condition - standard values
+            rsi_overbought = 75 if market_condition == 'EXTREME_BEARISH' else 70  # More standard
             
-            # More aggressive overbought conditions for SELL signals in bearish markets
-            if latest['rsi'] > rsi_overbought:
+            # Standard overbought conditions for SELL signals in bearish markets
+            if (latest['rsi'] > rsi_overbought and 
+                latest['volume_ratio'] > 1.0):  # Volume confirmation required
                 return 'SELL'
                 
-            # SELL on MACD crossover with volume confirmation
+            # SELL on MACD crossover with strong volume confirmation
             if (prev['macd'] > prev['macd_signal'] and 
                 latest['macd'] < latest['macd_signal'] and 
-                latest['volume_ratio'] > 1.2):
+                latest['volume_ratio'] > 1.5 and  # Higher volume requirement
+                latest['close'] < latest['ema_fast']):  # Trend confirmation
                 return 'SELL'
                 
-            # SELL on Supertrend direction change
-            if prev['supertrend_direction'] == 1 and latest['supertrend_direction'] == -1:
+            # SELL on Supertrend direction change with confirmation
+            if (prev['supertrend_direction'] == 1 and 
+                latest['supertrend_direction'] == -1 and
+                latest['volume_ratio'] > 1.2):  # Volume confirmation
                 return 'SELL'
                 
-            # Buy only on extreme oversold conditions in bearish markets
-            if (latest['rsi'] < 20 and 
-                latest['close'] < latest['bb_lower'] * 0.99 and
-                latest['close'] < latest['vwap'] * 0.97):
+            # Buy on standard oversold conditions in bearish markets
+            if (latest['rsi'] < 25 and  # Less extreme threshold
+                latest['close'] < latest['bb_lower'] * 0.995 and  # Closer to support
+                latest['close'] < latest['vwap'] * 0.98 and  # Less extreme
+                latest['volume_ratio'] > 1.0):  # Volume confirmation
                 return 'BUY'
                 
             return None
@@ -2226,7 +2235,7 @@ class RaysolDynamicStrategy(TradingStrategy):
     
     def get_simple_rsi_signal(self, df):
         """
-        Simple RSI-based signals for more frequent trading opportunities
+        Simple RSI-based signals with standard requirements for balanced trading
         """
         if len(df) < 2:
             return None
@@ -2234,23 +2243,23 @@ class RaysolDynamicStrategy(TradingStrategy):
         try:
             latest = df.iloc[-1]
             
-            # More aggressive RSI oversold/overbought conditions with lower volume requirement
-            if latest['rsi'] < 30 and latest['volume_ratio'] > 0.6:  # More lenient
+            # Standard RSI oversold/overbought conditions with proper volume requirement
+            if latest['rsi'] < 25 and latest['volume_ratio'] > 1.0:  # More standard thresholds
                 return 'BUY'
-            elif latest['rsi'] > 70 and latest['volume_ratio'] > 0.6:  # More lenient
+            elif latest['rsi'] > 75 and latest['volume_ratio'] > 1.0:  # More standard thresholds
                 return 'SELL'
                 
-            # RSI momentum signals with lower thresholds
+            # RSI momentum signals with standard thresholds
             if len(df) >= 3:
                 prev = df.iloc[-2]
                 prev2 = df.iloc[-3]
                 
-                # RSI momentum building up - more sensitive
-                if (prev2['rsi'] < 40 and prev['rsi'] < 45 and latest['rsi'] > 45 and
-                    latest['close'] > prev['close']):
+                # RSI momentum building up - standard sensitivity
+                if (prev2['rsi'] < 35 and prev['rsi'] < 40 and latest['rsi'] > 50 and
+                    latest['close'] > prev['close'] and latest['volume_ratio'] > 1.2):
                     return 'BUY'
-                elif (prev2['rsi'] > 60 and prev['rsi'] > 55 and latest['rsi'] < 55 and
-                      latest['close'] < prev['close']):
+                elif (prev2['rsi'] > 65 and prev['rsi'] > 60 and latest['rsi'] < 50 and
+                      latest['close'] < prev['close'] and latest['volume_ratio'] > 1.2):
                     return 'SELL'
                     
             return None
@@ -2261,7 +2270,7 @@ class RaysolDynamicStrategy(TradingStrategy):
     
     def get_momentum_scalping_signal(self, df):
         """
-        Generate momentum-based scalping signals for very frequent trading
+        Generate momentum-based signals with standard requirements for balanced trading
         """
         if len(df) < 5:
             return None
@@ -2277,32 +2286,38 @@ class RaysolDynamicStrategy(TradingStrategy):
             price_momentum_2 = (prev['close'] - prev2['close']) / prev2['close']
             price_momentum_3 = (prev2['close'] - prev3['close']) / prev3['close']
             
-            # Volume momentum
-            volume_increasing = latest['volume'] > prev['volume'] * 0.8
+            # Volume momentum - require stronger volume confirmation
+            volume_increasing = latest['volume'] > prev['volume'] * 1.2
             
-            # Strong momentum BUY signal
-            if (price_momentum_1 > 0.002 and  # 0.2% move
-                price_momentum_2 > 0 and
+            # Strong momentum BUY signal - higher thresholds for quality
+            if (price_momentum_1 > 0.005 and  # 0.5% move (increased from 0.2%)
+                price_momentum_2 > 0.002 and  # Consistent momentum required
                 latest['close'] > latest['ema_fast'] and
-                volume_increasing):
+                latest['close'] > latest['vwap'] and  # Additional confirmation
+                volume_increasing and
+                latest['rsi'] < 70):  # Not overbought
                 return 'BUY'
                 
-            # Strong momentum SELL signal  
-            if (price_momentum_1 < -0.002 and  # -0.2% move
-                price_momentum_2 < 0 and
+            # Strong momentum SELL signal - higher thresholds for quality
+            if (price_momentum_1 < -0.005 and  # -0.5% move (increased from -0.2%)
+                price_momentum_2 < -0.002 and  # Consistent momentum required
                 latest['close'] < latest['ema_fast'] and
-                volume_increasing):
+                latest['close'] < latest['vwap'] and  # Additional confirmation
+                volume_increasing and
+                latest['rsi'] > 30):  # Not oversold
                 return 'SELL'
                 
-            # Momentum reversal signals
-            if (price_momentum_1 > 0.003 and  # Strong reversal
-                price_momentum_2 < -0.002 and
-                latest['rsi'] < 60):  # Not overbought
+            # Momentum reversal signals - more conservative
+            if (price_momentum_1 > 0.008 and  # Strong reversal (increased from 0.003)
+                price_momentum_2 < -0.005 and  # Stronger previous movement
+                latest['rsi'] < 50 and  # More conservative RSI
+                volume_increasing):
                 return 'BUY'
                 
-            if (price_momentum_1 < -0.003 and  # Strong reversal
-                price_momentum_2 > 0.002 and
-                latest['rsi'] > 40):  # Not oversold
+            if (price_momentum_1 < -0.008 and  # Strong reversal (increased from -0.003)
+                price_momentum_2 > 0.005 and  # Stronger previous movement
+                latest['rsi'] > 50 and  # More conservative RSI
+                volume_increasing):
                 return 'SELL'
                 
             return None
@@ -2324,42 +2339,48 @@ class RaysolDynamicStrategy(TradingStrategy):
             prev2 = df.iloc[-3]
             prev3 = df.iloc[-4]
             
-            # Bullish price action patterns
-            # Higher lows with volume
+            # Bullish price action patterns - more conservative requirements
+            # Higher lows with volume and trend confirmation
             if (latest['low'] > prev['low'] and 
                 prev['low'] > prev2['low'] and
                 latest['close'] > latest['open'] and
-                latest['volume_ratio'] > 0.8):
+                latest['close'] > latest['ema_fast'] and  # Trend confirmation
+                latest['volume_ratio'] > 1.2):  # Higher volume requirement
                 return 'BUY'
                 
-            # Break above previous high with volume
+            # Break above previous high with strong volume and RSI confirmation
             if (latest['high'] > prev['high'] and
                 latest['close'] > prev['high'] and
-                latest['volume_ratio'] > 1.2):
+                latest['rsi'] < 70 and  # Not overbought
+                latest['volume_ratio'] > 1.5):  # Stronger volume requirement
                 return 'BUY'
                 
-            # Bearish price action patterns
-            # Lower highs with volume
+            # Bearish price action patterns - more conservative requirements
+            # Lower highs with volume and trend confirmation
             if (latest['high'] < prev['high'] and 
                 prev['high'] < prev2['high'] and
                 latest['close'] < latest['open'] and
-                latest['volume_ratio'] > 0.8):
+                latest['close'] < latest['ema_fast'] and  # Trend confirmation
+                latest['volume_ratio'] > 1.2):  # Higher volume requirement
                 return 'SELL'
                 
-            # Break below previous low with volume
+            # Break below previous low with strong volume and RSI confirmation
             if (latest['low'] < prev['low'] and
                 latest['close'] < prev['low'] and
-                latest['volume_ratio'] > 1.2):
+                latest['rsi'] > 30 and  # Not oversold
+                latest['volume_ratio'] > 1.5):  # Stronger volume requirement
                 return 'SELL'
                 
-            # Doji reversal patterns
+            # Doji reversal patterns - more conservative
             body_size = abs(latest['close'] - latest['open']) / latest['close']
-            if body_size < 0.002:  # Very small body (doji)
-                if (latest['close'] > latest['bb_upper'] * 0.99 and
-                    latest['rsi'] > 70):
+            if body_size < 0.001:  # Smaller body requirement for true doji
+                if (latest['close'] > latest['bb_upper'] * 0.995 and  # Closer to resistance
+                    latest['rsi'] > 75 and  # More overbought
+                    latest['volume_ratio'] > 1.0):  # Volume confirmation
                     return 'SELL'  # Doji at resistance
-                elif (latest['close'] < latest['bb_lower'] * 1.01 and
-                      latest['rsi'] < 30):
+                elif (latest['close'] < latest['bb_lower'] * 1.005 and  # Closer to support
+                      latest['rsi'] < 25 and  # More oversold
+                      latest['volume_ratio'] > 1.0):  # Volume confirmation
                     return 'BUY'  # Doji at support
                     
             return None
@@ -2827,7 +2848,7 @@ def get_strategy_for_symbol(symbol, strategy_name=None):
     if strategy_name:
         return get_strategy(strategy_name)
     
-    # Default to SUIUSDT strategy for any symbol
+    # Default to XRPUSDT strategy for any symbol
     return RaysolDynamicStrategy()
     
     # Default to base strategy if needed
