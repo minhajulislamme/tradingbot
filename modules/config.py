@@ -25,7 +25,7 @@ else:
 RECV_WINDOW = int(os.getenv('BINANCE_RECV_WINDOW', '10000'))
 
 # Trading parameters - RAYSOL only
-TRADING_SYMBOL = os.getenv('TRADING_SYMBOL', 'SUIUSDT')
+TRADING_SYMBOL = os.getenv('TRADING_SYMBOL', 'RAYSOLUSDT')
 TRADING_TYPE = 'FUTURES'  # Use futures trading
 LEVERAGE = int(os.getenv('LEVERAGE', '10'))
 MARGIN_TYPE = os.getenv('MARGIN_TYPE', 'ISOLATED')  # ISOLATED or CROSSED
